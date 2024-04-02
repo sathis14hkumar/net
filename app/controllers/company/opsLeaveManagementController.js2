@@ -1,0 +1,3632 @@
+const mongoose = require("mongoose")
+const StaffSapData = require('../../models/staffSAPData');
+const Ballot = require('../../models/ballot');
+const opsLeaves = require('../../models/opsLeaves');
+const OpsGroup = require('../../models/ops');
+const userHoliday = require('../../models/userHoliday');
+const swopRequests = require('../../models/swapRequests');
+const OpsTeam = require('../../models/opsTeam');
+const User = require('../../models/user');
+const PageSettingModel = require('../../models/pageSetting');
+//const _ = require('lodash');
+var __ = require('../../../helpers/globalFunctions');
+const CronJob = require('cron').CronJob;
+var multiparty = require('multiparty');
+const async = require('async');
+const moment = require('moment');
+const FCM = require('../../../helpers/fcm');
+__ = require('../../../helpers/globalFunctions');
+
+
+class opsLeave{
+
+    async opsLeaveDataPage(req,res){
+        const opsGroups = await OpsGroup.find({createdBy:req.params.id,isDelete:false},{_id:1,opsTeamId:1,opsGroupName:1,userId:1})
+       // const ballots = await Ballot.find({ops})
+        .populate([
+            {
+                path:"opsTeamId",
+                select:["name","_id","userId"]
+            },
+            {
+                path:"userId",
+                select:["_id","name","staffId"]
+            }
+        ]);
+        // let opsIds = [];
+        // for(let ops=0;ops<=opsGroups.length-1;ops++){
+        //     opsIds.push(opsGroups[ops]._id);
+        // }
+    //    const ballots =await Ballot.find({"opsGroupId" :{$in :opsIds}},{_id:1});
+    //    console.log("ballots is: ",ballots);
+        let opsLeavess=[];
+        let opsData=[];
+        let opss=[];
+        for(let op=0;op<=opsGroups.length-1;op++){
+             //check if ops leave for this ops group is present
+             const opsleave = await opsLeaves.findOne({opsGroupId:opsGroups[op]._id});
+             if(opsleave){
+                console.log("OPSLEAVE IS PRESENT: ",opsleave);
+                opss.push(opsleave);
+                var ops={id:opsGroups[op]._id,name:opsGroups[op].opsGroupName,team:[]};
+                if(opsGroups[op].opsTeamId.length>0){
+                    for(let t1=0;t1<=opsGroups[op].opsTeamId.length-1;t1++){
+                        let tt={id:opsGroups[op].opsTeamId[t1]._id,name:opsGroups[op].opsTeamId[t1].name};
+                        ops.team.push(tt);
+                    }
+                    opsData.push(ops);
+                }else{
+                    opsData.push(ops);
+                }
+             }else{
+                console.log("No its not there");
+                var opsLeave = {opsGroupId:opsGroups[op]._id,name:opsGroups[op].opsGroupName,createdBy:req.user._id,users:[],opsTeamId:[]};
+                var ops={id:opsGroups[op]._id,name:opsGroups[op].opsGroupName,team:[]};
+       
+                 opsLeave.companyId = req.user.companyId;
+                 if(opsGroups[op].opsTeamId.length>0){
+                   for(let t1=0;t1<=opsGroups[op].opsTeamId.length-1;t1++){
+                       let tt={id:opsGroups[op].opsTeamId[t1]._id,name:opsGroups[op].opsTeamId[t1].name};
+                       ops.team.push(tt);
+                   }
+                    for(let u=0;u<=opsGroups[op].userId.length-1;u++){
+                       for(let t=0;t<=opsGroups[op].opsTeamId.length-1;t++){
+                            let ids=opsGroups[op].opsTeamId[t].userId.filter(id=>id==opsGroups[op].userId[u]._id.toString());
+                           console.log("ids fund are: ",ids);
+                            if(ids.length>0){
+                                let user={};
+                                user.staffId = opsGroups[op].userId[u].staffId;
+                                user.id = opsGroups[op].userId[u]._id;
+                                user.name=opsGroups[op].userId[u].name;
+                                console.log("I am inside of if condition");
+                                user.teamId=opsGroups[op].opsTeamId[t]._id;
+                                user.teamName = opsGroups[op].opsTeamId[t].name;
+                                opsLeave.users.push(user);
+                            }else{
+                                console.log("I am inside of else condition y");
+                            }
+       
+                            if(!opsLeave.opsTeamId.includes(opsGroups[op].opsTeamId[t]._id)){
+                               opsLeave.opsTeamId.push(opsGroups[op].opsTeamId[t]._id);
+                            }else{
+                                console.log("team id is already there");
+                            }
+       
+                        }
+                    }
+                 }else{
+                    opsLeave.users = opsGroups[op].userId;
+                 }
+                 opsLeavess.push(opsLeave);
+                 opsData.push(ops);
+             }
+                 
+        }
+
+        console.log("ops leaves length: ",opsLeavess.length);
+          try{
+              if(opsLeavess.length>0){
+                  console.log("I am in here");
+                let data = await opsLeaves.insertMany(opsLeavess);
+                if(opss.length>0){
+                    data=data.concat(opss);
+                }
+                res.status(201).json({status: true, data: {leavedata:data,opsids:opsData}, message: "Successfull!!"});
+              }else{
+                  console.log("I am tata",opss);
+                  let data = opss;
+                  res.status(201).json({status: true, data: {leavedata:data,opsids:opsData}, message: "Got Successfully..!!"});
+              }
+            
+          }catch(e){
+            res.status(501).json({status: false, data: e, message: "Something went wrong!!"});
+          }
+     
+    }
+
+    async getOpsLeaveCanlender(req,res){
+        console.log("req.params.id: ",req.params.id);
+        const ballot = await Ballot.findOne({_id:req.params.id});
+       console.log("Got BAllot:",ballot);
+        if(!ballot){
+            res.status(404).json({status: false, data: null, message: "couldn't find requested ballot."});
+        }else{
+            try{
+                const opsLeaveData = await opsLeaves.findOne({ballots:{$in:[ballot._id]}});
+                console.log("got: ",opsLeaveData);
+                if(!opsLeaveData || opsLeaveData==null){
+                    console.log("I am inside of opsleavedata yep:");
+                    let allBallots=[];
+                    if(ballot.parentBallot){
+                        console.log("HERE ME!!!");
+                        let rounds = await this.findParent(ballot,allBallots);
+                        console.log("Rounds Found here: ",rounds);
+                        this.findQuotas(rounds,res,req);
+                        
+                    }else if(ballot.childBallots.length>0){
+                        //If selected ballot is parnt ballot
+                        console.log("Its a parent ballot may be");
+                        //let allBallots=[];
+                        allBallots.push(ballot._id);
+                       for(let c=0;c<=ballot.childBallots.length-1;c++){
+                        allBallots.push(ballot.childBallots[c]);
+                       }
+                      this.findQuotas(allBallots,res,req);
+                     
+                    }else{
+                        //This is alone ballot its has not parent and np children
+                        console.log("HERE ME: ");
+                        
+                        allBallots.push(ballot._id);
+                        this.findQuotas(allBallots,res,req);
+                    }
+                }else{ 
+                    
+                    res.status(201).json({status: true, data: opsLeaveData, message: "got it in ops Leaves."});                    
+                }
+               
+
+            }catch(e){
+                 res.status(501).json({status: false, data: null, message: "Oops! something went wrong."});
+            }
+        }
+
+    }
+
+    async findParent(ballotdata,allBallots){
+         console.log("ballotData is : ");
+         if(ballotdata.parentBallot){
+             let BBallot = await Ballot.findOne({_id: ballotdata.parentBallot},{_id:1,parentBallot:1,childBallots:1});
+             console.log("ballotData is : ",BBallot);
+             console.log("allBallots is : ",allBallots);
+             return this.findParent(BBallot,allBallots);
+             
+         }else if(ballotdata.childBallots.length>0){
+             console.log("Yoooo!!! its has a child ballots");
+             
+             allBallots.push(ballotdata._id);
+             for(let c=0;c<=ballotdata.childBallots.length-1;c++){
+                 console.log("Inside of for loop here",ballotdata.childBallots[c]);
+                 allBallots.push(ballotdata.childBallots[c]);
+             }
+             console.log("here at all Ballots e: ",allBallots);
+          //  return allBallots;
+            
+         }else{
+             console.log("It is just a ballot so no worries");
+         }
+        return allBallots;
+    }
+
+    async findQuotas(allballots,res,req){
+        console.log("before reverse: ",allballots);
+        allballots.reverse();
+        console.log("after reverse: ",allballots);
+        //let ballotToWork = allballots[0];
+        const ballotIs = await Ballot.findOne({_id:allballots[0]},{_id:1,ballotName:1,weekRange:1,slotCreation:1,OpsGroupId:1,wonStaff:1,adminId:1});
+        if(!ballotIs){
+            res.status(204).json({status: true, data: null, message: "Couldn't find ballot."});
+        }
+        
+        let slots = ballotIs.slotCreation;
+        ballotIs.monthRange = [];
+        ballotIs.monthRange = JSON.stringify(ballotIs.weekRange);
+        ballotIs.monthRange = JSON.parse(ballotIs.monthRange);   
+
+        ballotIs.monthRange.forEach((dd,index) => {
+    
+            dd.month = moment(dd.start).format('MMMM-YY');
+            dd.weekNO = index;
+        });
+        ballotIs.monthRange = groupBy(ballotIs.monthRange, 'month');
+        const MONTH =[];
+       
+       await Object.entries(ballotIs.monthRange).forEach(entry => {
+           console.log("entry is:",entry);
+            let key = entry[0];
+            let value = entry[1];
+            var objTo={};
+            objTo[key] = value;
+            MONTH.push(objTo);
+            //use key and value here
+          });
+          ballotIs.monthRange  = MONTH;
+
+          function groupBy(xs, key) {
+            return xs.reduce(function (rv, x) {
+                (rv[x[key]] = rv[x[key]] || []).push(x);
+                return rv;
+            }, {});
+        };
+     
+        let weekData =[];
+        for (let i = 0; i <= slots.length - 1; i++) {
+            let opsGrpid = slots[i].opsGroup.opsId;
+            let opsGroup={id:opsGrpid,value:slots[i].opsGroup.value,weekdata:[],opsTeams:[]};
+            
+            for (let j = 0; j <= slots[i].arr.length - 1; j++) {
+                let currentweek = j + 'A';
+                
+
+                var found = ballotIs.wonStaff.filter(function (element) {
+                    return (element.opsGroupId.toString() === opsGrpid.toString() && element.weekNo === j)
+                });
+                //slots[i].weekRangeSlot[currentweek].weeksValues={};
+                slots[i].weekRangeSlot[currentweek].value = slots[i].weekRangeSlot[currentweek].value - found.length;
+
+                let currentWeekIs = ballotIs.weekRange[j];
+                var daylist = getDaysArray(new Date(currentWeekIs.start),new Date(currentWeekIs.end),slots[i].weekRangeSlot[currentweek].value,j);
+                console.log("daylist is: ",daylist);
+                opsGroup.weekdata = opsGroup.weekdata.concat(daylist);
+               
+                if (slots[i].opsTeam.length > 0) {
+                  
+                    slots[i].opsTeam.forEach((team, d) => {
+                       
+                        let currentweek = j + d.toString();
+                      
+                        //console.logs("Current week in Team: ", currentweek);
+                        var found = ballotIs.wonStaff.filter(function (element) {
+
+                            if(element.opsTeamId){
+                               
+                            return (element.opsTeamId.toString() === team._id.toString() && element.weekNo === j)
+                            }else{
+                               
+                                return (element.opsGroupId===opsGrpid && !element.opsTeamId && element.weekNO===j)
+                            }
+
+                        });
+                        //console.logs("FOUND: ", found);
+                      //  slots[i].weekRangeSlot[currentweek].weeksValues={};
+                        slots[i].weekRangeSlot[currentweek].value = slots[i].weekRangeSlot[currentweek].value - found.length;
+                        if(opsGroup.opsTeams[d] && opsGroup.opsTeams[d].weekdata && opsGroup.opsTeams[d].weekdata.length>0){
+                            let currentWeekIs = ballotIs.weekRange[j];
+                            var daylist = getDaysArray(new Date(currentWeekIs.start),new Date(currentWeekIs.end),slots[i].weekRangeSlot[currentweek].value,j);
+                            opsGroup.opsTeams[d].weekdata = opsGroup.opsTeams[d].weekdata.concat(daylist);
+                        }else{
+                         let tm={id:team._id,name:team.name,weekdata:[]};
+                         opsGroup.opsTeams.push(tm);
+                         let currentWeekIs = ballotIs.weekRange[j];
+                            var daylist = getDaysArray(new Date(currentWeekIs.start),new Date(currentWeekIs.end),slots[i].weekRangeSlot[currentweek].value,j);
+                            opsGroup.opsTeams[d].weekdata = opsGroup.opsTeams[d].weekdata.concat(daylist);
+                        }
+                       
+                    });
+                }
+                
+            }
+            //delete slots[i].arr;
+            weekData.push(opsGroup);
+        }
+      
+        //after all we need to create ops leave object
+        let OpsLeave={};
+        OpsLeave.createdBy = req.user._id;
+        OpsLeave.ballots=allballots;
+        OpsLeave.adminId = ballotIs.adminId;
+        OpsLeave.opsGroupId = ballotIs.opsGroupId;
+        OpsLeave.weekRange = ballotIs.weekRange;
+        OpsLeave.companyId = req.user.companyId;
+        OpsLeave.slotRange = weekData;
+        OpsLeave.monthRange = ballotIs.monthRange;
+        var opsleave = new opsLeaves(OpsLeave);
+        var leaveops = await opsleave.save();
+        console.log("Successfully saved!!: ",leaveops);
+        res.status(201).json({status: true, data: leaveops, message: "got it."});
+        //  return(ballotIs);
+
+        function getDaysArray(start, end,value,week) {
+            for(var arr=[],dt=start; dt<=end; dt.setDate(dt.getDate()+1)){
+                console.log("Arr: ",arr);
+                arr.push({date:new Date(dt),value:value,weekNo:week});
+            }
+            return arr;
+        };
+    }
+
+    async getDateRange(req,res){
+        const bb = await Ballot.findOne({_id:req.params.id},{_id:1,weekRange:1});
+
+      
+        let arrOfWeekIs = bb.weekRange[0];
+       console.log("arrOfWeekIs: ",arrOfWeekIs);
+        var daylist = getDaysArray(new Date(arrOfWeekIs.start),new Date(arrOfWeekIs.end));
+        console.log("dayList is:",daylist);
+        res.status(201).json({status: true, data: daylist, message: "got it."});
+
+        function getDaysArray(start, end) {
+            for(var arr=[],dt=start; dt<=end; dt.setDate(dt.getDate()+1)){
+                console.log("Arr: ",arr);
+                arr.push(new Date(dt));
+            }
+            return arr;
+        };
+    }
+
+    async savePerDayOpsQuota(req,res){
+        let id = req.body.opsGroup.id;
+                                     
+        const opsleave = await opsLeaves.findOne({opsGroupId:id},{_id:1,perDayQuota:1,opsTeamId:1});
+        if(!opsleave){
+            res.status(203).json({status: false,data: null, message: "couldent find this ops group in opsLeave"});                                
+        }   
+        let data = req.body.opsGroup;
+        let key;let values;let ddquota={};
+        data.quota.map((dd)=>{
+           // dd.value = parseInt(dd.value);
+           ddquota=dd;
+            key = Object.keys(dd)[0];
+            values = Object.values(dd)[0];     
+        });
+        if(opsleave.perDayQuota){
+           let filterquota = opsleave.perDayQuota.quota.filter(q=>{
+                 let qq=q.hasOwnProperty(key);
+                 return qq;
+            });
+         
+           if(filterquota.length>0){
+               for(let kk=0;kk<=opsleave.perDayQuota.quota.length-1;kk++){
+                    if(opsleave.perDayQuota.quota[kk].hasOwnProperty(key)){
+                        opsleave.perDayQuota.quota[kk] = ddquota;
+                    }else{
+                        //this does not have any own property for that object.
+                    }
+               } 
+           }else{
+            opsleave.perDayQuota.quota.push(ddquota);
+           }
+       
+        }else{
+            opsleave.perDayQuota={id:data.id,name:data.name,quota:data.quota,opsTeams:[]}
+        }
+       //For Ops Teams
+       if(opsleave.opsTeamId.length>0 && req.body.opsTeam){
+        if(opsleave.perDayQuota.opsTeams.length>0){
+            var ttquota; 
+            var key1;
+            var values1;
+            req.body.opsTeam.quota.map((dd)=>{
+                // dd.value = parseInt(dd.value);
+                 ttquota=dd;
+                 key1 = Object.keys(dd)[0];
+                 values1 = Object.values(dd)[0];
+             });
+            let Isteam = opsleave.perDayQuota.opsTeams.filter(qa=>qa.id===req.body.opsTeam.id);
+            if(Isteam && Isteam.length>0){
+                 //This ieam exists there replace it in opsteam array.
+                  for(let tm=0;tm<=opsleave.perDayQuota.opsTeams.length-1;tm++){
+                      if(opsleave.perDayQuota.opsTeams[tm].id == req.body.opsTeam.id){
+                          //update value
+                          let filtertmquota = opsleave.perDayQuota.opsTeams[tm].quota.filter(q=>{
+                            let qq=q.hasOwnProperty(key1);
+                            return qq;
+                       });
+
+                       if(filtertmquota.length>0){
+                        for(let kk=0;kk<=opsleave.perDayQuota.opsTeams[tm].quota.length-1;kk++){
+                             if(opsleave.perDayQuota.quota[kk].hasOwnProperty(key1)){
+                                 console.log("foing in if as I foind that property");
+                                 opsleave.perDayQuota.opsTeams[tm].quota[kk] = ttquota;
+                             }else{
+                                 //this does not have any own property for that object.
+                             }
+                        } 
+                      }else{
+                          console.log("I am going in this case");
+                          opsleave.perDayQuota.opsTeams[tm].quota.push(ttquota);
+                        }
+                         // opsleave.perDayQuota.opsTeams[tm].quota = req.body.opsTeam.quota;
+                          console.log("updated that :",opsleave.perDayQuota.opsTeams[tm]);
+                      }else{
+                          //nothing to update or save
+                      }
+                  }
+            }else{
+              // does not exists there so just push it directly in opsteam array.
+              opsleave.perDayQuota.opsTeams.push(req.body.opsTeam);
+            }
+         }else{
+             opsleave.perDayQuota.opsTeams.push(req.body.opsTeam);
+         }
+       }else{
+           console.log("Does not have teams");
+       }
+
+        console.log("per day quots id: ",opsleave.perDayQuota);
+        let updated = await opsLeaves.update({_id:opsleave._id},{$set:{perDayQuota:opsleave.perDayQuota}});
+        if(updated){
+            res.status(201).json({status: true, data: updated, message: "Successfully updated quota values."});                                
+        }else{
+            res.status(203).json({status: false, data: null, message: "couldn't update values"});                                
+        }
+    }
+
+    async getQuotaByOpsGroup(req,res){
+        let id = req.params.id;
+        const opsleave = await opsLeaves.findOne({opsGroupId:id},{_id:1,perDayQuota:1,opsTeamId:1});
+        if(!opsleave){
+            res.status(203).json({status: false, data: null, message: "couldent find this ops group in opsLeave"});                                
+        }else{
+            res.status(201).json({status: true, data: opsleave, message: "found data successfully"});                                
+        }
+    }
+
+   async getCalenderForYear(req,res){
+         try{
+            let data = req.body;
+            let id = req.body.opsGroupId;
+           const opsleave = await opsLeaves.findOne({opsGroupId:id},{_id:1,perDayQuota:1,opsTeamId:1});
+           let userOnHoliday= await userHoliday.find({opsGroupId:id});//,fromdate:data.date
+           const Ballots = await Ballot.find({opsGroupId : data.opsGroupId,isCanceled:false},{_id:1,ballotName:1,ballotStartDate:1,ballotEndDate:1,weekRange:1,wonStaff:1});   
+
+          // return res.json({opsleave, userOnHoliday})
+           if(!opsleave){
+               res.status(203).json({status: false, data: null, message: "couldent find this ops group in opsLeave"});                                
+           }
+           if(!req.body.opsTeamId){
+               if(!opsleave.perDayQuota){
+                   res.status(203).json({status: false, data: null, message: "Please set per day quota for requested ops group"});                                
+                } else {
+                    console.log("ININ YAYA");
+                    if(opsleave.perDayQuota.quota.length>0){
+                       for(let q=0;q<=opsleave.perDayQuota.quota.length-1;q++){
+                           if(opsleave.perDayQuota.quota[q].hasOwnProperty(req.body.year)){
+                               let finalData = opsleave.perDayQuota.quota[q];
+                               console.log("finalData : ",finalData);
+
+                               //return res.json({finalData, q})
+                              // if(finalData){
+                                 for(let j=0; j<finalData[req.body.year].length; j++){
+                                  const dayData = finalData[req.body.year][j];
+                                   //Here I have dates of data.
+                                   let currdate = dayData.date.split("-");
+                                   currdate = new Date(+currdate[2], currdate[1] - 1, +currdate[0]+1);
+                                   console.log("Currdate here is: ",currdate);
+                                           
+                                   
+                                   let woncount=0;
+                                   for(let bb=0;bb<=Ballots.length-1;bb++){
+                                      let from = new Date(Ballots[bb].ballotStartDate);
+                                      let to = new Date(Ballots[bb].ballotEndDate);
+                                      if((currdate <= to && currdate >= from)) {
+                                         
+                                          //find wons amongst these now
+                                          for(let dm=0;dm<=Ballots[bb].weekRange.length-1;dm++){
+                                              let start = new Date(Ballots[bb].weekRange[dm].start);
+                                              let end = new Date(Ballots[bb].weekRange[dm].end);
+                                              let end1 = nextDayUTC(end);
+                                             
+                                              //to add day in end date found from end date of ballot weekRange.
+                                             function nextDayUTC(d) {
+                                              var aDay = 1440 * 60 * 1000;
+                                              var d2 = new Date( Math.trunc((d.getTime() + aDay)/aDay)*aDay);
+                                              return d2;
+                                            }
+                      
+                      
+                                              if(currdate <= end1 && currdate >= start){
+                                                  
+                                                   var wondate = Ballots[bb].wonStaff.filter(ws=>ws.opsGroupId == data.opsGroupId && ws.weekNo == dm);
+                                                  
+                                                  woncount = woncount + wondate.length;
+                                                  console.log("WonCount here is :",woncount);
+                                                  break;
+                                              }
+                                          }
+                                          console.log("In if of date range yep!!");
+                                         // bbBallots.push(Ballots[bb]);
+                                      }else{
+                                          console.log("not in that date range");
+                                      }
+                                  }
+                                   
+
+                                  console.log("WONCOUNT S: ",woncount);
+
+
+                                   const countUser = userOnHoliday.filter((item)=>{
+                                       console.log("user on holiday item: ");
+                                     var datePartsss = item.fromdate.split("-");
+                                   
+                                     datePartsss= new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+                                   
+                                     if(item.todate){
+                                       var dateParteee = item.todate.split("-");
+                                       dateParteee= new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1); 
+                                       console.log("Currdate here is: ",item.todate);
+                                         return currdate <= dateParteee && currdate >= datePartsss;
+                                         
+                                     }else{
+                                         console.log("in else of it");
+                                         return item.fromdate == dayData.date;
+                                     }
+                                       
+                                   });
+                                   console.log("Count user: ",countUser);
+                                   var filtered = countUser.filter(filterWithStatus);
+                                   console.log("FILTERING COUN: ",filtered);
+                                   var countFiltered = countUser.length - filtered.length;
+                                //   const countUser = userOnHoliday.filter((item)=>{
+                                //       return item.fromdate == dayData.date;
+                                //   });
+                                  const qo = parseInt(dayData.value);
+                                  console.log("countFiltered: ",qo-countFiltered +woncount);
+                                  let v = qo-(countFiltered +woncount);
+                                  console.log("V is: ",v);
+                                //   if(v<0){
+                                //       v =0;
+                                //   }
+                                  finalData[req.body.year][j].value = v;
+                                  finalData[req.body.year][j].quota = parseInt(qo);
+                                 }
+                                res.status(201).json({status: true, data: opsleave.perDayQuota.quota[q], message: "Found requested quota"});                                
+                           }else{
+                               console.log("Its not requested year");
+                           }
+                       }
+                    }
+                }
+           }else{
+               console.log("Hi i m in else:",opsleave.perDayQuota);
+              if(!opsleave.perDayQuota){
+                 res.status(203).json({status: false, data: null, message: "Please set per day quota for requested ops group and ops team"});                                
+              } else {
+                let opsData ={}; 
+                let hasopsData = false;
+                  if(opsleave.perDayQuota.quota.length>0){
+                      
+                    for(let q=0;q<=opsleave.perDayQuota.quota.length-1;q++){
+                        if(opsleave.perDayQuota.quota[q].hasOwnProperty(req.body.year)){
+                            hasopsData =true;
+                            opsData = opsleave.perDayQuota.quota[q];
+                            break;
+                        }else{
+                            console.log("not in");
+                        }
+                    }
+                  }
+                  if(opsleave.perDayQuota.opsTeams.length>0){
+                      let allTeams=[];
+                       var filteOtherTeams = opsleave.perDayQuota.opsTeams.filter(q=>q.id!==req.body.opsTeamId);
+                    console.log("filteOtherTeams:",filteOtherTeams);
+                        if(filteOtherTeams.length>0){
+                            for(let ot=0;ot<=filteOtherTeams.length-1;ot++){
+                                let curreQuota = filteOtherTeams[ot].quota;
+                                console.log("current quota is: ");
+                                    var filterwithprop = curreQuota.filter(cc=>cc.hasOwnProperty(req.body.year));
+                                console.log("current quota isfilterwithprop: ",filterwithprop);
+                                if(filterwithprop.length>0){
+                                    allTeams.push(filterwithprop[0]);
+                                }
+                                
+                            }
+                        }
+
+                      var opsTeamdata = opsleave.perDayQuota.opsTeams.filter(q=>q.id==req.body.opsTeamId);
+                      
+                      if(opsTeamdata.length>0){
+                         for(let q=0;q<=opsTeamdata[0].quota.length-1;q++){
+                             if(opsTeamdata[0].quota[q].hasOwnProperty(req.body.year)){
+                                console.log("ALLTEAMS: ",allTeams);
+                                 let finalData = opsTeamdata[0].quota[q];
+                                 //return res.json({finalData, q})
+                                // if(finalData){
+                                   for(let j=0; j<finalData[req.body.year].length; j++){
+                                    const dayData = finalData[req.body.year][j];
+                                    let opsquota = 0; let teamsquota=0;
+                                    if(hasopsData){
+                                        opsquota = opsData[req.body.year][j].value;
+                                    }
+                                    if(allTeams.length>0){
+                                        for(let i=0;i<=allTeams.length-1;i++){
+                                            console.log("In if here: ",allTeams[i][req.body.year][j]);
+                                            teamsquota = teamsquota+parseInt(allTeams[i][req.body.year][j].value);
+                                            console.log("teamquota: ",teamsquota);
+                                        }
+                                    }
+                                    //balloting data fetching.
+                                    let currdate = dayData.date.split("-");
+                                    currdate = new Date(+currdate[2], currdate[1] - 1, +currdate[0]+1);
+                                  
+
+                                     //get ballot won counts from ballots
+                                     let woncount=0;
+                                     for(let bb=0;bb<=Ballots.length-1;bb++){
+                                        let from = new Date(Ballots[bb].ballotStartDate);
+                                        let to = new Date(Ballots[bb].ballotEndDate);
+                                        if((currdate <= to && currdate >= from)) {
+                                           
+                                            //find wons amongst these now
+                                            for(let dm=0;dm<=Ballots[bb].weekRange.length-1;dm++){
+                                                let start = new Date(Ballots[bb].weekRange[dm].start);
+                                                let end = new Date(Ballots[bb].weekRange[dm].end);
+                                                let end1 = nextDayUTC(end);
+                                               
+                                                //to add day in end date found from end date of ballot weekRange.
+                                               function nextDayUTC(d) {
+                                                var aDay = 1440 * 60 * 1000;
+                                                var d2 = new Date( Math.trunc((d.getTime() + aDay)/aDay)*aDay);
+                                                return d2;
+                                              }
+                        
+                                                if(currdate <= end1 && currdate >= start){
+                                                    
+                                                     var wondate = Ballots[bb].wonStaff.filter(ws=>ws.opsGroupId == data.opsGroupId && ws.opsTeamId==data.opsTeamId && ws.weekNo == dm);
+                                                    
+                                                    woncount = woncount + wondate.length;
+                                                  //  console.log("WonCount here is :",woncount);
+                                                    break;
+                                                }
+                                            }
+                                           // console.log("In if of date range yep!!");
+                                           // bbBallots.push(Ballots[bb]);
+                                        }else{
+                                            console.log("not in that date range");
+                                        }
+                                    }
+                                     
+
+                                   // console.log("WONCOUNT S: ",woncount);
+
+
+                                      //Here I have dates of data from casual holidays.
+                                     
+                                      
+                                      const countUser = userOnHoliday.filter((item)=>{
+                                         
+                                        var datePartsss = item.fromdate.split("-");
+                                       
+                                        datePartsss= new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+                                      
+                                        if(item.todate){
+                                          var dateParteee = item.todate.split("-");
+                                          dateParteee= new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1); 
+                                         
+                                            return currdate <= dateParteee && currdate >= datePartsss && item.opsTeamId == req.body.opsTeamId;
+                                            
+                                        }else{
+                                           
+                                            return item.fromdate == dayData.date && item.opsTeamId == req.body.opsTeamId ;
+                                        }
+                                          
+                                      });
+                                     
+                                      var filtered = countUser.filter(filterWithStatus);
+                                     
+                                      var countFiltered = countUser.length - filtered.length;
+                                      //countFiltered = countFiltered +woncount;
+                                    // const countUser = userOnHoliday.filter((item)=>{
+                                    //     return item.fromdate == dayData.date && item.opsTeamId == req.body.opsTeamId;
+                                    // });
+                                    const qo = parseInt(dayData.value);
+                                    const sums = parseInt(dayData.value) +teamsquota;
+                                    console.log("SUMS: ",sums);
+                                    // let v = qo-countUser.length;
+                                    let v = countFiltered + woncount;
+                                    console.log("SUMS: countFiltered: ",countFiltered ,"+ woncount: ",woncount, "= ",v);
+                                    // if(v<0){
+                                    //     v = 0;
+                                    // }
+                                    // finalData[req.body.year][j].value = v;
+                                    if(opsquota > sums){
+                                        finalData[req.body.year][j].quota = parseInt(qo);
+                                        finalData[req.body.year][j].value = finalData[req.body.year][j].quota - v;
+                                    }else{
+                                        finalData[req.body.year][j].quota = parseInt(opsquota);
+                                        finalData[req.body.year][j].value = finalData[req.body.year][j].quota - v;
+                                    }
+                                   // finalData[req.body.year][j].quota = parseInt(qo);
+                                   }
+                               // } 
+                                  res.status(201).json({status: true, data:finalData,userOnHoliday, message: "Found requested quota"});                                
+   
+                             }else{
+                                 console.log("Its not requested year");
+                             }
+                         }
+                      }else{
+                         res.status(203).json({status: false, data: null, message: "Please set Quota Values for requested year first"});                                
+   
+                      }
+                  }
+              }
+           }
+         }catch(e){
+            res.status(203).json({status: false, data: null, message: "something went worng or Please check selected year"});
+
+         }
+         function filterWithStatus(event) {
+            return event.status == "cancelled";
+        }
+        
+   }
+
+   async getUserByDate(req,res){
+         let data = req.body;
+        
+         try{
+            const opsleave = await opsLeaves.findOne({opsGroupId:data.opsGroupId},{_id:1,perDayQuota:1,opsTeamId:1,users:1});
+            const Ballots = await Ballot.find({opsGroupId : data.opsGroupId,isCanceled:false},{_id:1,ballotName:1,ballotStartDate:1,ballotEndDate:1,weekRange:1,wonStaff:1});   
+            console.log("Ballots List is: ",Ballots.length);
+            var bbBallots =[];
+            var dateParts = data.date.split("-");
+           
+            // dateParts:  [ '04', '01', '2020' ]
+            // dateObject:  2020-01-03T18:30:00.000Z
+            // month is 0-based, that's why we need dataParts[1] - 1
+            var dateObject = new Date(+dateParts[2], dateParts[1] - 1, +dateParts[0]+1); 
+           let woncount=0;
+            //find only ballots with specified date range
+            for(let bb=0;bb<=Ballots.length-1;bb++){
+                let from = new Date(Ballots[bb].ballotStartDate);
+                let to = new Date(Ballots[bb].ballotEndDate);
+                if((dateObject <= to && dateObject >= from)) {
+                   
+                    //find wons amongst these now
+                    for(let dm=0;dm<=Ballots[bb].weekRange.length-1;dm++){
+                        let start = new Date(Ballots[bb].weekRange[dm].start);
+                        let end = new Date(Ballots[bb].weekRange[dm].end);
+                        let end1 = nextDayUTC(end);
+                       
+                        //to add day in end date found from end date of ballot weekRange.
+                       function nextDayUTC(d) {
+                        var aDay = 1440 * 60 * 1000;
+                        var d2 = new Date( Math.trunc((d.getTime() + aDay)/aDay)*aDay);
+                        return d2;
+                      }
+
+
+                        if(dateObject <= end1 && dateObject >= start){
+                            
+                            var wondate;
+                            if(data.opsTeamId){
+                            wondate = Ballots[bb].wonStaff.filter(ws=>ws.opsGroupId == data.opsGroupId && ws.opsTeamId==data.opsTeamId && ws.weekNo == dm);
+                            }else{
+                                console.log("HERRETTATATTA");
+                             wondate = Ballots[bb].wonStaff.filter(ws=>ws.opsGroupId == data.opsGroupId && ws.weekNo == dm);
+                            }
+                            //loop on wondate and add ballot Id in each object here for further apis to use.
+                            for(let ff=0;ff<=wondate.length-1;ff++){
+                                wondate[ff].ballotId = Ballots[bb]._id;
+                            }
+
+
+                            bbBallots = bbBallots.concat(wondate);
+                            console.log("bbBallots is: ",bbBallots);
+                            woncount = woncount + wondate.length;
+                            console.log("WonCount here is :",woncount);
+                            break;
+                        }
+                    }
+                    console.log("In if of date range yep!!");
+                   // bbBallots.push(Ballots[bb]);
+                }else{
+                    console.log("not in that date range");
+                }
+            }
+            let allUsers =[];
+            if(bbBallots.length>0){
+                for(let u=0;u<=bbBallots.length-1;u++){
+                    //const userd = await User.findOne({_id:bbBallots[u].userId},{_id:1,name:1,staffId:1});
+                    let user = {};
+                    user.opsGroupId = bbBallots[u].opsGroupId;
+                    if(bbBallots[u].opsTeamId){
+                        user.opsTeamId = bbBallots[u].opsTeamId;
+                    }
+                    user.leaveStatus="Balloted";
+                    user.type=1;
+                   // user.username= userd.name;
+                    user.userId=bbBallots[u].userId
+                    user.weekNo=bbBallots[u].weekNo;
+                    user.ballotId = bbBallots[u].ballotId;
+                    allUsers.push(user);
+                }
+            }
+            console.log("ALL USERS: ",allUsers);
+            if(!opsleave){
+                res.status(203).json({status: false, data: null, message: "couldnt find this ops group in opsLeave"});                                
+            }else{
+                
+                if(opsleave.perDayQuota){
+                    let casualCount=0;
+                    if(!data.opsTeamId){
+                        // let userOnHoliday= await userHoliday.find({opsGroupId:data.opsGroupId,fromdate:data.date}).populate({path:"userId",select:"staffId"});
+                        let userOnHoliday= await userHoliday.find({opsGroupId:data.opsGroupId,fromdate:data.date});
+                        console.log("No team id in request");
+                        userOnHoliday = userOnHoliday.reduce(
+                            function(accumulator, currentValue) {
+                                if(currentValue.todate){
+                                var datePartsss = currentValue.fromdate.split("-");
+                                var dateParteee = currentValue.todate.split("-");
+                                let startdd = new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+                                let enddd = new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1); 
+                                if((dateObject <= enddd && dateObject >= startdd)){
+                                    console.log("Motha if");
+                                    accumulator.push(currentValue);
+                                }
+                                // if(currentValue.fromdate == data.date || currentValue.todate == data.date){
+                                //     accumulator.push(currentValue);
+                                // }
+                             }else{
+                                if(currentValue.fromdate == data.date){
+                                    console.log("else cha if");
+                                    accumulator.push(currentValue);
+                                }
+                             }
+                             return accumulator;
+                            },[])
+                       
+                        //var filtered = userOnHoliday.filter(filterWithStatus);
+                       // let casualCount = userOnHoliday.length;    
+                       //casualCount = userOnHoliday.length - filtered.length;                     
+                       let casualcount = userOnHoliday.filter(uu => uu.type==2 && uu.status!=="cancelled");
+                       casualCount = casualcount.length;
+                        let specialCount = userOnHoliday.filter(uuh => uuh.type==4 && uuh.status!=="cancelled");
+                        let specialcount = specialCount.length;
+                        let blockCount = userOnHoliday.filter(uh=>uh.type==3 && uh.status!=="cancelled");
+                        woncount = woncount+blockCount.length;
+                        userOnHoliday = userOnHoliday.concat(allUsers);
+                        // casualCount = casualCount -(specialcount+blockCount.length);   
+                        if(opsleave.perDayQuota.quota.length>0){
+                            console.log("here inside of if me");
+                            let yeardata = opsleave.perDayQuota.quota.filter(q=>{
+                                if(q.hasOwnProperty(data.year)){
+                                    return q;
+                                }
+                            });
+                           // console.log("yeardata is:",yeardata);
+                            if(yeardata.length>0){
+                                console.log("in if")
+                                // find quota for that date and the users.
+                                let key = Object.keys(yeardata[0])[0];
+                                console.log("keyis: ",key);
+                                let thatdateIs = yeardata[0][key].filter(qa=>qa.date==data.date);
+                               // console.log("thatdate is : ",thatdateIs);
+                                if(thatdateIs.length>0){
+                                    let balance = thatdateIs[0].value - (casualCount+specialcount+blockCount.length);
+                                    if(balance<0){
+                                        balance = 0;
+                                    }
+                                   let UsersOnHoliday = groupUsersByLeaves(userOnHoliday,'userId');
+                                   console.log("USERS HERE ARE: ",UsersOnHoliday);
+                                   var datatosend={date:thatdateIs[0],users:opsleave.users,userOnHoliday:UsersOnHoliday,balance,casualCount,balloted:woncount,specialcount}
+                                   this.sendResponse(datatosend,res);
+                                  // res.status(201).json({status: true, data: {date:thatdateIs[0],users:opsleave.users,userOnHoliday:UsersOnHoliday, balance, casualCount,balloted:woncount,specialcount}, message: "Successfully reveived data."});
+                                }else{
+                                   res.status(203).json({status: false, data: null, message: "date is not found "});
+                                }
+                            }else{
+                              res.status(203).json({status: false, data: null, message: "requested object does not found"});
+                            }
+                        }else{
+                           res.status(203).json({status: false, data: null, message: "Please set quota values for requested ops group"});
+                            
+                        }
+                    }else{
+                        
+                        let opsdateIs =[];
+                          if(opsleave.perDayQuota.quota.length>0){
+
+                            for(let q=0;q<=opsleave.perDayQuota.quota.length-1;q++){
+                                if(opsleave.perDayQuota.quota[q].hasOwnProperty(req.body.year)){
+                                    let opsData = opsleave.perDayQuota.quota[q];
+                                    opsdateIs = opsData[req.body.year].filter(qa=>qa.date==data.date);
+                                    break;
+                                }else{
+                                    console.log("not in");
+                                }
+                            }
+                          }
+
+
+                        if(opsleave.opsTeamId.length>0 && opsleave.perDayQuota.opsTeams.length>0){
+
+                            //to find all other teams quotas
+
+                            let allTeams=[];
+                           
+                            var filteOtherTeams = opsleave.perDayQuota.opsTeams.filter(q=>q.id!==req.body.opsTeamId);
+                            console.log("filteOtherTeams:",filteOtherTeams);
+                             if(filteOtherTeams.length>0){
+                                 for(let ot=0;ot<=filteOtherTeams.length-1;ot++){
+                                     let curreQuota = filteOtherTeams[ot].quota;
+                                     console.log("current quota is: ");
+                                         var filterwithprop = curreQuota.filter(cc=>cc.hasOwnProperty(req.body.year));
+                                     console.log("current quota isfilterwithprop: ",filterwithprop);
+                                     if(filterwithprop.length>0){
+                                         allTeams.push(filterwithprop[0]);
+                                     }
+                                     
+                                 }
+                             }
+
+                            
+                                //TILL HERE
+                                let userOnHoliday= await userHoliday.find({opsGroupId:data.opsGroupId,opsTeamId: data.opsTeamId});
+                        //    let userOnHoliday= await userHoliday.find({opsGroupId:data.opsGroupId,opsTeamId: data.opsTeamId}).populate({path:"userId",select:"staffId"});
+                            userOnHoliday = userOnHoliday.reduce(
+                                function(accumulator, currentValue) {
+                                    if(currentValue.todate){
+                                    var datePartsss = currentValue.fromdate.split("-");
+                                    var dateParteee = currentValue.todate.split("-");
+                                    let startdd = new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+                                    let enddd = new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1); 
+                                    if((dateObject <= enddd && dateObject >= startdd)){
+                                        console.log("Motha if");
+                                        accumulator.push(currentValue);
+                                    }
+                                    // if(currentValue.fromdate == data.date || currentValue.todate == data.date){
+                                    //     accumulator.push(currentValue);
+                                    // }
+                                 }else{
+                                    if(currentValue.fromdate == data.date){
+                                        console.log("else cha if");
+                                        accumulator.push(currentValue);
+                                    }
+                                 }
+                                 return accumulator;
+                                },[])
+
+                           
+                           // var filtered = userOnHoliday.filter(filterWithStatus);
+                            // let casualCount = userOnHoliday.length;    
+                           
+                           // casualCount = userOnHoliday.length - filtered.length; 
+                            let casualcount = userOnHoliday.filter(uu=>uu.type==2 && uu.status!=='cancelled');
+
+                            let specialCount = userOnHoliday.filter(uuh => uuh.type==4 && uuh.status!=='cancelled');
+                            
+                             casualCount = casualcount.length;
+                            let specialcount = specialCount.length;
+                           
+
+                            let blockCount = userOnHoliday.filter(uh=>uh.type==3 && uh.status!=='cancelled');
+                        
+                            woncount = woncount + blockCount.length;
+                           
+                          // let casualCount = userOnHoliday.length;
+                            let usersHere = opsleave.users.filter(u=>u.teamId.toString()==data.opsTeamId.toString());
+                            userOnHoliday = userOnHoliday.concat(allUsers);
+
+                           // casualCount = casualCount -(specialcount+blockCount.length);   
+
+                            let teamSelectedIs = opsleave.perDayQuota.opsTeams.filter(q=>q.id==data.opsTeamId);
+                            if(teamSelectedIs.length>0){
+                                let yeardata = teamSelectedIs[0].quota.filter(q=>{
+                                    if(q.hasOwnProperty(data.year)){
+                                        return q;
+                                    }
+                                });
+                               // console.log("yeardata in team is:",yeardata);
+                                if(yeardata.length>0){
+                                    console.log("in if")
+                                    // find quota for that date and the users.
+                                    let key = Object.keys(yeardata[0])[0];
+                                    console.log("keyis team: ",key);
+                                    let thatdateIs = yeardata[0][key].filter(qa=>qa.date==data.date);
+                                    let teamquota=0;
+                                    if(allTeams.length>0){
+                                        for(let i=0;i<=allTeams.length-1;i++){
+                                            console.log("In if here: ");
+                                            let teamCurrQuota = allTeams[i][req.body.year].filter(da=>da.date==data.date);
+                                            if(teamCurrQuota.length>0){
+                                                teamquota = teamquota+parseInt(teamCurrQuota[0].value);
+                                            }
+                                            
+                                            console.log("teamquota: ",teamquota);
+                                        }
+                                    }
+                                  
+                                    console.log("thatdate is : ",thatdateIs);
+                                    if(thatdateIs.length>0){
+                                        const totalsOfTeam=parseInt(thatdateIs[0].value)+parseInt(teamquota);
+                                        console.log("TOTALS FO TEAM IS: ",totalsOfTeam);
+                                        let opsBalance =0;
+                                        let balanceToUse = 0;
+                                        if(opsdateIs.length>0){
+                                            console.log("Inside check og opsdate is cha balance: ",opsdateIs);
+                                            opsBalance = opsdateIs[0].value;
+                                        }
+                                        console.log("OPS BALANCE IS: ",opsBalance);
+                                        if(parseInt(opsBalance)>totalsOfTeam){
+                                            console.log("IN IFA ");
+                                            balanceToUse = thatdateIs[0].value
+                                        }else{
+                                            console.log("IN IFA  ELSE");
+
+                                            balanceToUse = opsBalance
+                                            thatdateIs[0] = opsdateIs[0];
+                                        }
+                                        console.log("blance to use is: ",balanceToUse);
+                                        let balance = balanceToUse - (casualCount+specialcount+blockCount.length);
+
+                                        // let balance = thatdateIs[0].value - (casualCount+specialcount+blockCount.length);
+                                        if(balance<0){
+                                            balance = 0;
+                                        }
+                                        let UsersOnHoliday = groupUsersByLeaves(userOnHoliday,'userId');
+                                        var datatosend={date:thatdateIs[0],users:usersHere,userOnHoliday:UsersOnHoliday,balance,casualCount,balloted:woncount,specialcount}
+                                        this.sendResponse(datatosend,res);
+                                      // res.status(201).json({status: true, data: {date:thatdateIs[0],users:usersHere,userOnHoliday:UsersOnHoliday,balance,casualCount,balloted:woncount,specialcount}, message: "Successfully reveived data."});
+                                    }else{
+                                       res.status(203).json({status: false, data: null, message: "date is not found "});
+                                    }
+                                }else{
+                                  res.status(203).json({status: false, data: null, message: "requested object does not found"});
+                                }
+                            }else{
+                              res.status(203).json({status: false, data: null, message: "please set ops team quota first"});
+                            } 
+                        }
+                    } 
+                }else{
+                    res.status(203).json({status: false, data: null, message: "Please set quota values for requested ops group and ops teams"});
+                }
+
+                
+                function groupUsersByLeaves(xs, key) {
+                    return xs.reduce(function (rv, x) {
+                        (rv[x[key]] = rv[x[key]] || []).push(x);
+                        return rv;
+                    }, {});
+                 }
+                                           
+            }
+         }catch(e){
+            res.status(501).json({status: false, data: null, message: "Something went wrong!"});                                
+         }
+   }
+
+   async sendResponse(datar,res){
+    let response =[];
+    console.log("I m here");
+    for(let [key,value] of Object.entries(datar.userOnHoliday)){
+        console.log("key: ",key);
+        try{
+            const user = await User.findOne({_id:key},{name:1,staffId:1,isLeaveSwapAllowed:1});
+            console.log("user : ",user);
+            var User1 = {
+                id:user._id,
+                name:user.name,
+                staffId:user.staffId,
+                leaveStatus:value[value.length-1].leaveStatus,
+                type:value[value.length-1].type,
+                leavedata : value,
+                isAllowedToSwap:user.isLeaveSwapAllowed
+            }
+             if(value[0].status){
+                User1.status = value[value.length-1].status;
+               
+                
+            }
+            response.push(User1);
+        }catch(e){
+            console.log("e",e);
+           // res.send(e);
+        }
+
+    }
+    delete datar.userOnHoliday;
+    datar.userOnHoliday = response;
+    console.log("found object as such: ",datar);
+    res.status(201).json({status: true, data: datar, message: "Successfully reveived data."});
+
+   }
+
+   async allocateLeave(req,res){
+        try{
+         let request = req.body;
+         request.logs=[];
+         var myLog = {
+            updatedBy:req.user.name,
+            message:1, //1-Allocation 2- Change date 3-cancellation,
+            fromdate:request.fromdate,
+            todate:request.todate
+         }
+         request.logs.push(myLog);
+        // console.log("request:" ,request);
+         var userholiday = new userHoliday(request);
+         console.log("userholiday:",userholiday);
+         var holiday = await userholiday.save();
+         //let holiday= await userHoliday.save(userholiday);
+         console.log("holiday: ",holiday);
+         if(holiday){
+            res.status(201).json({status: true, data: holiday, message: "Successfully Allocated leave to user."});
+            //Notification saying leave is allocated.
+            const user = await User .findOne({_id:req.body.userId},{_id:0,deviceToken:1});
+            let usersDeviceTokens=[]; var dd = new Date();
+            if(user && user.deviceToken){
+                console.log("USER: ",user);
+                usersDeviceTokens.push(user.deviceToken);
+                var collapseKey = holiday._id;
+                let notificationObj = {
+                        title: 'Leave Allocated.',
+                        body: 'Leave dated from  '+holiday.fromdate+' to '+holiday.todate+ ' has been allocated to you.',
+                        bodyText: 'Leave dated from  '+holiday.fromdate+' to '+holiday.todate+ ' has been allocated to you.',
+                        bodyTime: dd,
+                        bodyTimeFormat: ['DD-MMM-YYYY HH:mm'],
+                  }
+             
+                FCM.push(usersDeviceTokens, notificationObj, collapseKey);
+                console.log("sent"); 
+             }
+         }else{
+            res.status(203).json({status: false, data: null, message: "Unable to allocate leave"});
+         }
+        }catch(e){
+            res.status(501).json({status: false, data: null, message: "Something went wrong!"});                                
+        }
+         
+       
+   }
+
+   async getMobileScreenForLeave(req,res){
+         console.log("request body is: ",req.body); //,fromdate:req.body.date
+        try{
+         const ops = await OpsGroup.findOne({userId:req.body.userId,isDelete:false},{_id:1,opsGroupName:1});
+         const user = await User.findOne({_id:req.body.userId},{_id:0,parentBussinessUnitId:1}).populate(
+            {
+                path: "parentBussinessUnitId",
+                select: "name",
+                populate: {
+                    path: "sectionId",
+                    select: "name",
+                    populate: {
+                        path: "departmentId",
+                        select: "name",
+                        populate:{
+                            path:"companyId",select:"name"
+                        }
+                    }
+                }
+            }
+            )
+        let BU= user.parentBussinessUnitId.sectionId.departmentId.companyId.name+" > "+user.parentBussinessUnitId.sectionId.departmentId.name+" > "
+        +user.parentBussinessUnitId.sectionId.name+" > "+user.parentBussinessUnitId.name;
+        //  .populate([{
+        //      path:'parentBussinessUnitId',select:"name"
+        //  }]);
+        let dateHere = new Date(req.body.date);
+        dateHere= moment(dateHere).format('DD-MM-YYYY');
+        var dateParts = req.body.date.split("-");
+        var dateObject = new Date(+dateParts[2], dateParts[1] - 1, +dateParts[0]+1);  
+        let leaves1 = await userHoliday.find({userId:req.body.userId},{_id:1,fromdate:1,todate:1,type:1,status:1,attachment:1,reason:1,userId:1});
+        const Ballots = await Ballot.find({opsGroupId : ops._id,isCanceled:false},{_id:1,ballotName:1,ballotStartDate:1,ballotEndDate:1,weekRange:1,wonStaff:1});   
+        let leaves = JSON.stringify(leaves1);
+        leaves = JSON.parse(leaves);
+        let all=[];
+        for(let bb=0;bb<=Ballots.length-1;bb++){
+         
+            let ddddata=[];
+            let wondate = Ballots[bb].wonStaff.filter(ws=> ws.userId==req.body.userId);
+            
+             if(wondate.length>0){
+                 for(let w=0;w<=wondate.length-1;w++){
+                      var duration = {};
+                      var frmDt = new Date(Ballots[bb].weekRange[wondate[w].weekNo].start);
+                      var toDt = new Date(Ballots[bb].weekRange[wondate[w].weekNo].end);
+                      let end1 = nextDayUTC(toDt);
+                     
+                      duration.fromdate = moment(Ballots[bb].weekRange[wondate[w].weekNo].start).format('DD-MM-YYYY');
+                      duration.todate = moment(Ballots[bb].weekRange[wondate[w].weekNo].end).format('DD-MM-YYYY');
+                    
+                      if(dateObject<=end1 && dateObject>=frmDt){
+                          duration.isCurrentDate = true;
+                      }
+                      duration.type = 1;
+                      duration.weekNo = wondate[w].weekNo;
+                      duration.status = 'Balloted'
+                      duration.ballotName = Ballots[bb].ballotName;
+                      duration.ballotId = Ballots[bb]._id;
+                      duration.userId = req.body.userId;
+                      ddddata.push(duration);
+
+                        
+                      //to add day in end date found from end date of ballot weekRange.
+                     function nextDayUTC(d) {
+                        var aDay = 1440 * 60 * 1000;
+                        var d2 = new Date( Math.trunc((d.getTime() + aDay)/aDay)*aDay);
+                        return d2;
+                      }
+                 }
+             }else{
+                 console.log("in ballotings");
+              }
+              all=all.concat(ddddata);
+              
+       }
+       for(let leave=0;leave<=leaves.length-1;leave++){
+        var datePartsss = leaves[leave].fromdate.split("-");
+        var dateParteee = leaves[leave].todate.split("-");
+        let startdd = new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+        let enddd = new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1); 
+            if(dateObject<=enddd && dateObject>=startdd){
+                leaves[leave].isCurrentDate = true;
+            }
+       }
+  
+       //From usersHolidays
+     // var leaves1 = leaves.filter(ff=>ff.status !=='cancelled');
+     // console.log("LEAVES: ",leaves1);
+       all = all.concat(leaves);
+    
+       var dataToSend={opsName:ops.opsGroupName,Bu:BU,leave:all}
+       //console.log("User data id: ",all);
+       res.status(201).json({status: true, data:dataToSend, message: "successfully received data."});
+    }catch(e){
+        res.status(500).json({status: false, data:e, message: "Something went wrong."});
+    }
+
+   }  
+   async cancelLeaveForStaff(req,res){
+         console.log("request here is: ",req.body);
+         try{
+            const holiday = await userHoliday.findOne({opsGroupId:req.body.opsId, userId: req.body.userid,fromdate:req.body.leavePeriod.start});
+            const user = await User .findOne({_id:req.body.userid},{_id:0,deviceToken:1});
+            console.log("holiday found is:", holiday);
+            if(holiday){
+                let log=holiday.logs;
+                var myLog = {
+                    updatedBy:req.user.name,
+                    message:3, //1-Allocation 2- Change date 3-cancellation,
+                    fromdate:holiday.fromdate,
+                    todate:holiday.todate
+                 }
+                 log.push(myLog);
+                 holiday.logs = log;
+                 console.log("HERE: ",holiday.logs);
+                holiday.status='cancelled';
+                 
+                 try{
+                    await holiday.save();
+                 }catch(e){
+                   res.status(203).json({status: false, data: e, message: "error"});
+
+                 }
+                res.status(201).json({status: false, data: holiday, message: "Cancelled leave"});
+                //Notification saying leave is cancelled.
+                let usersDeviceTokens=[]; var dd = new Date();
+                if(user && user.deviceToken){
+                    console.log("USER: ",user);
+                    usersDeviceTokens.push(user.deviceToken);
+                    var collapseKey = holiday._id;
+                    let notificationObj = {
+                        title: 'Your Leave has been cancelled.',
+                            body: 'Your leave dated from '+holiday.fromdate+' to '+holiday.todate+ ' has been cancelled.',
+                            bodyText: 'Your leave dated from '+holiday.fromdate+' to '+holiday.todate+ ' has been cancelled.',
+                            bodyTime: dd,
+                            bodyTimeFormat: ['DD-MMM-YYYY HH:mm'],
+                      }
+                    console.log("usersDeviceTokens",usersDeviceTokens);
+                    console.log("notificationObj",notificationObj);
+                    console.log("collapseKey",collapseKey);
+
+                    FCM.push(usersDeviceTokens, notificationObj, collapseKey); 
+                }
+                
+                    console.log("Notification sent");
+            }else{
+                res.status(203).json({status: false, data: null, message: "Sorry ! couldnt find similar data"});
+            }
+         }catch(e){
+            res.status(501).json({status: false, data: null, message: "Something went wrong!"});                                
+         }
+   } 
+   async changeLeaveDates(req,res){
+         try{
+            const holiday = await userHoliday.findOne({opsGroupId:req.body.opsId, userId: req.body.userId,fromdate:req.body.date});
+             let data={opsGroupId:req.body.opsId,userId:req.body.userId,fromdate:req.body.startdate,todate:req.body.enddate,idis:holiday._id};
+            var check = await this.checkForDateOverlapWhenApply(data);
+            if(check==0){
+                res.status(203).json({status: false, data: check, message: "Dates overlapping!"});
+            }else{
+               
+                if(holiday){
+                    console.log("I am saving but checking previous date; ",holiday);
+                   let log= holiday.logs;
+                   var myLog = {
+                       updatedBy:req.user.name,
+                       message:2, //1-Allocation 2- Change date 3-cancellation,
+                       fromdate:holiday.fromdate,
+                       todate:holiday.todate,
+                       fromCurrentdate:req.body.startdate,
+                       toCurrentdate:req.body.enddate
+                    }
+                    log.push(myLog);
+                    var from = holiday.fromdate;
+                    holiday.logs = log;
+                    holiday.fromdate = req.body.startdate;
+                    holiday.todate = req.body.enddate;
+                    holiday.isSwapable = req.body.isSwapable;
+                    await holiday.save();
+                    res.status(201).json({status: false, data: holiday, message: "updated successfully!"});
+                    const user = await User .findOne({_id:req.body.userId},{_id:0,deviceToken:1});
+                    let usersDeviceTokens=[]; var dd = new Date();
+                    if(user && user.deviceToken){
+                        console.log("USER: ",user);
+                        usersDeviceTokens.push(user.deviceToken);
+                        var collapseKey = holiday._id;
+                        let notificationObj = {
+                           title: 'Your Leave dates are changed.',
+                           body: 'Your leave changed from '+from+' to '+holiday.fromdate+ ' . ',
+                           bodyText: 'Your leave changed from '+from+' to '+holiday.fromdate+ ' . ',
+                                bodyTime: dd,
+                                bodyTimeFormat: ['DD-MMM-YYYY HH:mm'],
+                            }
+                     
+                        FCM.push(usersDeviceTokens, notificationObj, collapseKey); 
+                        console.log("sent");
+                    }
+                   
+                }else{
+                   res.status(203).json({status: false, data: null, message: "Sorry ! couldnt find similar data"});
+                }
+            }
+             
+         }catch(e){
+            res.status(501).json({status: false, data: null, message: "Something went wrong!"});                                
+         }
+   }
+   async findIfDateIsAssigned(req,res){
+       try{
+        if(!req.body.opsGroupId || !req.body.userId){
+            return res.status(203).json({status: false, data: null, message: "please select user and OpsGroup."});      
+          }
+          let dates =[];
+          var startDate = req.body.fromdate.split("-");
+         let startdd = new Date(+startDate[2], startDate[1] - 1, +startDate[0]+1); 
+         console.log("StartDD : ",startdd);
+ 
+         let endDate= req.body.todate.split("-");
+         let enddd = new Date(+endDate[2], endDate[1] - 1, +endDate[0]+1)
+         console.log("enddd : ",enddd);
+          
+         //check in that dates.
+         dates = getDateArray(startdd,enddd)
+         console.log("DAtes: ",dates);
+         let leaves = await userHoliday.find({opsGroupId:req.body.opsGroupId, userId:req.body.userId},{_id:1,fromdate:1,todate:1,type:1,status:1});
+         const Ballots = await Ballot.find({opsGroupId : req.body.opsGroupId,isCanceled:false},{_id:1,ballotName:1,ballotStartDate:1,ballotEndDate:1,weekRange:1,wonStaff:1});   
+ 
+         console.log("Leaves found are: ",leaves);
+ 
+         for(let km=0;km<=dates.length-1;km++){
+             for(let leave=0;leave<=leaves.length-1;leave++){
+                 let leaveend;
+                 var leavestart = leaves[leave].fromdate.split("-");
+                 leavestart = new Date(+leavestart[2], leavestart[1] - 1, +leavestart[0]+1);
+                 if(leaves[leave].todate){
+                     leaveend = leaves[leave].todate.split("-");
+                     leaveend = new Date(+leaveend[2], leaveend[1] - 1, +leaveend[0]+1);
+                 }
+                 if(dates[km]>=leavestart && dates[km]<=leaveend && leaves[leave].status!=='cancelled'){
+                     return res.status(203).json({status: false, data: null, message: "Dates overlapping.. please check this user has assigned leave in requested period"});
+                     //break;
+                 }else{
+                     console.log("notfound");
+                 }
+             }
+         }
+         //check with Ballots as well
+         for(let km=0;km<=dates.length-1;km++){
+             console.log("going to ballot",Ballots.length);
+             for(let bb=0;bb<=Ballots.length-1;bb++){
+              for(let dm=0;dm<=Ballots[bb].weekRange.length-1;dm++){
+                console.log("IN ballots");
+                let start = new Date(Ballots[bb].weekRange[dm].start);
+                let end = new Date(Ballots[bb].weekRange[dm].end);
+                let end1 = nextDayUTC(end);
+ 
+                if(dates[km] <= end1 && dates[km] >= start){
+                    console.log("checking date if");
+                 let wondate = Ballots[bb].wonStaff.filter(ws=>ws.opsGroupId == req.body.opsGroupId && ws.userId==req.body.userId && ws.weekNo == dm);
+                 console.log("WONDATES ARE: ",wondate);
+                 if(wondate.length>0){
+                     return res.status(203).json({status: false, data: null, message: "Dates overlapping.. plese check if this user has won some ballots"});
+                 }else{
+                     console.log("in ballotings");
+                  }
+                }
+ 
+                //to add day in end date found from end date of ballot weekRange.
+               function nextDayUTC(d) {
+                var aDay = 1440 * 60 * 1000;
+                var d2 = new Date( Math.trunc((d.getTime() + aDay)/aDay)*aDay);
+                return d2;
+              }
+            }
+           }
+          }
+          res.status(201).json({status: false, message: "Everything is Fine"});
+
+       }catch(e){
+        res.status(500).json({status: false, message: "Something went wrong!"});
+
+       }
+
+       function getDateArray(start, end) {
+        console.log("In get dates : ");
+        var
+          arr = new Array(),
+          dt = new Date(start);
+      
+        while (dt <= end) {
+            console.log("in while....");
+          arr.push(new Date(dt));
+          dt.setDate(dt.getDate() + 1);
+        }
+        console.log("At array: ",arr);
+        return arr;
+      
+      }
+     
+   }
+   async getLeaveByUser(req,res){
+    try{
+        if(!req.body.opsGroupId || !req.body.userId){
+            return res.status(203).json({status: false, data: null, message: "please select user and OpsGroup."});      
+          }
+          
+          let isSwap = true;
+          let ops = await OpsGroup.findOne({_id:req.body.opsGroupId},{swopSetup:1});
+         
+          if(ops && ops.swopSetup){
+            let isSwappable = parseInt(ops.swopSetup);
+            if(isSwappable==0){
+                isSwap=false;
+            }else{
+                isSwap=true;
+            }
+          }
+          console.log("HER reached");
+          let leaves = await userHoliday.find({opsGroupId:req.body.opsGroupId, userId:req.body.userId},{_id:1,fromdate:1,todate:1,type:1,status:1,isSwapable:1});
+          const Ballots = await Ballot.find({opsGroupId : req.body.opsGroupId,isCanceled:false},{_id:1,ballotName:1,ballotStartDate:1,ballotEndDate:1,weekRange:1,wonStaff:1});   
+          let all=[];
+          for(let bb=0;bb<=Ballots.length-1;bb++){
+           
+              let ddddata=[];
+              let wondate = Ballots[bb].wonStaff.filter(ws=>ws.opsGroupId == req.body.opsGroupId && ws.userId==req.body.userId);
+              
+               if(wondate.length>0){
+                   for(let w=0;w<=wondate.length-1;w++){
+                        var duration = {};
+                        duration.fromdate = moment(Ballots[bb].weekRange[wondate[w].weekNo].start).format('DD-MM-YYYY');
+                        duration.todate = moment(Ballots[bb].weekRange[wondate[w].weekNo].end).format('DD-MM-YYYY');
+                        duration.type = 1;
+                        duration.ballotName = Ballots[bb].ballotName;
+                       ddddata.push(duration);
+                   }
+               }else{
+                   console.log("in ballotings");
+                }
+                all=all.concat(ddddata);
+                
+         }
+    
+         //From usersHolidays
+        var leaves1 = leaves.filter(ff=>ff.status !=='cancelled');
+       // console.log("LEAVES: ",leaves1);
+         all = all.concat(leaves1);
+         let resp={isSwap:isSwap,data:all};
+         //console.log("User data id: ",all);
+         res.status(201).json({status: true, data:resp, message: "successfully received data."});
+    }catch(e){
+        res.status(500).json({status: false, message: "Something went wrong!"});
+    }
+   }
+   async getUserLeaveLogs(req,res){
+    try{
+        const leaves = await userHoliday.find({userId:req.body.userId},{_id:0,logs:1,fromdate:1,todate:1});
+     //console.log("All logs: ",leaves);
+     let logResponse =[];
+     if(leaves.length>0){
+         for(let i=0;i<=leaves.length-1;i++){
+            logResponse=logResponse.concat(leaves[i].logs);
+         }
+     }
+     res.status(201).json({status: true, data:logResponse, message: "successfully received data."});
+    }catch(e){
+        res.status(500).json({status: false, message: "Something went wrong!"});
+    }
+     
+   }
+   async getUsersListWithSwap(req,res){
+       let requestdata = req.body;
+       try{
+       if(requestdata.opsTeamId){
+          
+        //ops team id is present there.
+        const users = await OpsTeam.findOne({_id:requestdata.opsTeamId},{_id:0,userId:1});
+        const leaves = await userHoliday.find({userId:{$in:users.userId}},{_id:0,fromdate:1,todate:1,type:1,status:1,isSwapable:1,userId:1});
+        const Ballotings = await Ballot.find({opsGroupId : requestdata.opsGroupId,isCanceled:false},{_id:1,ballotName:1,ballotStartDate:1,ballotEndDate:1,weekRange:1,wonStaff:1}); 
+        let Ballots = JSON.stringify(Ballotings);
+        Ballots = JSON.parse(Ballots);
+        let wons=[];
+        if(Ballots.length>0){
+            for(let i=0;i<=Ballots.length-1;i++){
+                let currentwons=[];
+                var wonbyopsteam = Ballots[i].wonStaff.filter(ws=>ws.opsTeamId == requestdata.opsTeamId);
+                console.log("wons are In: ",wonbyopsteam.length);
+                if(wonbyopsteam.length>0){
+                    
+                    for(let k=0;k<=wonbyopsteam.length-1;k++){
+                        var woning ={};
+                        let fromdate = Ballots[i].weekRange[wonbyopsteam[k].weekNo].start;
+                        let todate = Ballots[i].weekRange[wonbyopsteam[k].weekNo].end;
+                        woning.fromdate = fromdate;
+                        woning.todate = todate;
+                        woning.type=1,
+                        woning.status ="Balloted";
+                        woning.userId = wonbyopsteam[k].userId;
+                        currentwons.push(woning);
+
+                    }
+                }
+                wons=wons.concat(currentwons);
+            }
+        }
+        wons = wons.concat(leaves);
+        let data = groupBy(wons,'userId');
+        //find data of individual user
+        let response =[];
+        for(let [key,value] of Object.entries(data)){
+            //console.log("key: ",key);
+            try{
+                const ops = await OpsGroup.findOne({userId:key,isDelete:false},{swopSetup:1});
+                const user = await User.findOne({_id:key},{name:1,staffId:1,isLeaveSwapAllowed:1});
+                ops.swopSetup = parseInt(ops.swopSetup);
+                let isSwap = false;
+                if(ops.swopSetup==0){
+                    isSwap = false;
+                    if(user.isLeaveSwapAllowed==true){
+                        isSwap = false;
+                    }else if(user.hasOwnProperty('isLeaveSwapAllowed')){
+                        isSwap=user.isLeaveSwapAllowed;
+                    }
+                    else if(user.isLeaveSwapAllowed==false){
+                        isSwap = false;
+                    }else{
+                        isSwap = false;
+                    }
+                }else{
+                    isSwap = false;
+                    if(user.isLeaveSwapAllowed==true){
+                       
+                        isSwap = true;
+                    }else if(user.hasOwnProperty('isLeaveSwapAllowed')){
+                       
+                        isSwap=user.isLeaveSwapAllowed;
+                    }
+                    else if(user.isLeaveSwapAllowed==false){
+                        
+                        isSwap = false;
+                    }else{
+                       
+                        isSwap = false;
+                    }
+
+                 }
+              
+               // console.log("user : ",user);
+               
+                var User1 = {
+                    id:user._id,
+                    name:user.name,
+                    staffId:user.staffId,
+                    leavedata : value,
+                    isAllowedToSwap:isSwap
+                }
+                response.push(User1);
+            }catch(e){
+                console.log("e",e);
+               // res.send(e);
+            }
+        }
+        
+        res.status(201).json({status: true, data:response, message: "successfully received data."});
+        
+     }else{
+        
+        const users = await OpsGroup.findOne({_id:requestdata.opsGroupId},{_id:0,userId:1});
+        const leaves = await userHoliday.find({userId:{$in:users.userId}},{_id:0,fromdate:1,todate:1,type:1,status:1,isSwapable:1,userId:1});
+        const Ballotings = await Ballot.find({opsGroupId : requestdata.opsGroupId,isCanceled:false},{_id:1,ballotName:1,ballotStartDate:1,ballotEndDate:1,weekRange:1,wonStaff:1}); 
+        let Ballots = JSON.stringify(Ballotings);
+        Ballots = JSON.parse(Ballots);
+        let wons=[];
+        if(Ballots.length>0){
+            for(let i=0;i<=Ballots.length-1;i++){
+                let currentwons=[];
+                var wonbyopsteam = Ballots[i].wonStaff.filter(ws=>ws.opsGroupId.toString() == requestdata.opsGroupId.toString());
+                console.log("wons are In: ",wonbyopsteam.length);
+                if(wonbyopsteam.length>0){
+                    
+                    for(let k=0;k<=wonbyopsteam.length-1;k++){
+                        var woning ={};
+                        let fromdate = Ballots[i].weekRange[wonbyopsteam[k].weekNo].start;
+                        let todate = Ballots[i].weekRange[wonbyopsteam[k].weekNo].end;
+                        woning.fromdate = fromdate;
+                        woning.todate = todate;
+                        woning.type=1,
+                        woning.status ="Balloted";
+                        woning.slotNo = wonbyopsteam[k].weekNo;
+                        woning.userId = wonbyopsteam[k].userId;
+                        currentwons.push(woning);
+                       
+                    }
+                }
+                wons=wons.concat(currentwons);
+            }
+        }
+        wons = wons.concat(leaves);
+        let data = groupBy(wons,'userId');
+        //find data of individual user
+        let response =[];
+        for(let [key,value] of Object.entries(data)){
+            console.log("key: ",key);
+            try{
+                const ops = await OpsGroup.findOne({userId:key,isDelete:false},{swopSetup:1});
+                const user = await User.findOne({_id:key},{name:1,staffId:1,isLeaveSwapAllowed:1});
+                ops.swopSetup = parseInt(ops.swopSetup);
+                let isSwap = false;
+                if(ops.swopSetup==0){
+                    isSwap = false;
+                    if(user.isLeaveSwapAllowed==true){
+                        isSwap = false;
+                    }else if(user.hasOwnProperty('isLeaveSwapAllowed')){
+                        isSwap=user.isLeaveSwapAllowed;
+                    }
+                    else if(user.isLeaveSwapAllowed==false){
+                        isSwap = false;
+                    }else{
+                        isSwap = false;
+                    }
+                }else{
+                    isSwap = false;
+                    if(user.isLeaveSwapAllowed==true){
+                        isSwap = true;
+                    }else if(user.hasOwnProperty('isLeaveSwapAllowed')){
+                        isSwap=user.isLeaveSwapAllowed;
+                    }
+                    else if(user.isLeaveSwapAllowed==false){
+                        isSwap = false;
+                    }else{
+                        isSwap = false;
+                    }
+                }
+                var User1 = {
+                    id:user._id,
+                    name:user.name,
+                    staffId:user.staffId,
+                    leavedata : value,
+                    isAllowedToSwap:isSwap
+                }
+                response.push(User1);
+            }catch(e){
+                console.log("e",e);
+               // res.send(e);
+            }
+        }
+       
+        res.status(201).json({status: true, data:response, message: "successfully received data."});
+     }
+    }catch(e){
+        res.status(500).json({status: false, message: "Something went wrong!"});
+    }
+       function groupBy(xs, key) {
+        return xs.reduce(function (rv, x) {
+            (rv[x[key]] = rv[x[key]] || []).push(x);
+            return rv;
+        }, {});
+     }
+   }
+   async swapRestrictToUser(req,res){
+       let userId = req.params.userid;
+       const user= await User.findOne({_id:userId},{isLeaveSwapAllowed:1});
+       
+       if(user.isLeaveSwapAllowed && user.isLeaveSwapAllowed == true){
+            await User.findByIdAndUpdate({_id:userId},{isLeaveSwapAllowed:false},function(err,doc){
+                if(err){
+                    res.status(203).json({status: false, data:err, message: "error when updating."});               
+                }else{
+                    res.status(201).json({status: true, message: "successfully updated."});
+                }
+            })
+       }else{
+        await User.findByIdAndUpdate({_id:userId},{isLeaveSwapAllowed:true},function(err,doc){
+           if(err){
+            res.status(203).json({status: false, data:err, message: "error when updating."});               
+           }else{
+            res.status(201).json({status: true, message: "successfully updated."});
+           }
+        })
+       }
+   
+   }
+
+   //Staff API's
+   async checkForDateOverlapWhenApply(data){
+    
+    let dates =[];
+    var startDate = data.fromdate.split("-");
+    let startdd = new Date(+startDate[2], startDate[1] - 1, +startDate[0]+1); 
+   
+   let endDate= data.todate.split("-");
+   let enddd = new Date(+endDate[2], endDate[1] - 1, +endDate[0]+1)
+   
+   //check in that dates.
+   dates = getDateArray(startdd,enddd)
+   
+   let leaves = await userHoliday.find({userId:data.userId},{_id:1,fromdate:1,todate:1,type:1});
+   const Ballots = await Ballot.find({opsGroupId : data.opsGroupId,isCanceled:false},{_id:1,ballotName:1,ballotStartDate:1,ballotEndDate:1,weekRange:1,wonStaff:1});   
+  
+ for(let km=0;km<=dates.length-1;km++){
+     for(let leave=0;leave<=leaves.length-1;leave++){
+        
+         let leaveend;
+         var leavestart = leaves[leave].fromdate.split("-");
+         leavestart = new Date(+leavestart[2], leavestart[1] - 1, +leavestart[0]+1);
+         if(leaves[leave].todate){
+             leaveend = leaves[leave].todate.split("-");
+             leaveend = new Date(+leaveend[2], leaveend[1] - 1, +leaveend[0]+1);
+         }
+         if(data.idis && data.idis.toString() == leaves[leave]._id.toString()){
+            console.log("same id found", data.idis)
+         }else{
+            if(dates[km]>=leavestart && dates[km]<=leaveend && leaves[leave].status!=='cancelled'){
+                return 0 // 0 says dates overlapping..
+                //break;
+            }else{
+                console.log("notfound");
+            }
+         }
+         
+     }
+  
+ }
+ //check with Ballots as well
+ for(let km=0;km<=dates.length-1;km++){
+    
+     for(let bb=0;bb<=Ballots.length-1;bb++){
+      for(let dm=0;dm<=Ballots[bb].weekRange.length-1;dm++){
+       
+        let start = new Date(Ballots[bb].weekRange[dm].start);
+        let end = new Date(Ballots[bb].weekRange[dm].end);
+        let end1 = nextDayUTC(end);
+
+        if(dates[km] <= end1 && dates[km] >= start){
+           
+         let wondate = Ballots[bb].wonStaff.filter(ws=>ws.opsGroupId ==  data.opsGroupId && ws.userId==data.userId && ws.weekNo == dm);
+            
+         if(wondate.length>0){
+             return 0; //0 says dates overlapping
+            // return res.status(203).json({status: false, data: null, message: "Dates overlapping.. plese check if this user has won some ballots"});
+         }else{
+             console.log("in ballotings");
+          }
+        }
+
+        //to add day in end date found from end date of ballot weekRange.
+       function nextDayUTC(d) {
+        var aDay = 1440 * 60 * 1000;
+        var d2 = new Date( Math.trunc((d.getTime() + aDay)/aDay)*aDay);
+        return d2;
+      }
+    }
+   }
+  }
+  console.log("returnong");
+    return 1;
+    function getDateArray(start, end) {
+        console.log("In get dates : ");
+        var
+          arr = new Array(),
+          dt = new Date(start);
+      
+        while (dt <= end) {
+            console.log("in while....");
+          arr.push(new Date(dt));
+          dt.setDate(dt.getDate() + 1);
+        }
+        console.log("At array: ",arr);
+        return arr;
+      
+      }
+   }
+
+   async applyForLeave(req,res){
+       try{
+           console.log("here see");
+      
+        let request = req.body;
+        const ops = await OpsGroup.findOne({userId:request.userId, isDelete:false},{_id:1});
+        const opsTeam = await OpsTeam.findOne({userId:request.userId,isDeleted:false},{_id:1});
+        let data = {
+            fromdate : request.fromdate,
+            todate:request.todate,
+            userId:request.userId,
+            opsGroupId:ops._id
+        }
+        var check = await this.checkForDateOverlapWhenApply(data);
+        console.log("here check is: ", check);
+        if(check==0){
+            return res.status(300).json({
+                  success: false,
+                  data:check,
+                  message:"Dates overlapping!"
+            });
+        }
+        console.log("check", check);
+        var myLog = {
+            updatedBy:req.user.name,
+            message:4, //1-Allocation 2- Change date 3-cancellation,4-applied
+            fromdate:request.fromdate,
+            todate:request.todate
+         }
+        var leaveapplication= {
+            userId : request.userId,
+            username:req.user.name,
+            fromdate: request.fromdate,
+            todate:request.todate,
+            type: request.leaveType,
+            reason:request.reason,
+            status:'Applied',
+            opsGroupId:ops._id,
+            logs:[myLog]
+        }
+        if(req.body.attachment){
+            leaveapplication.attachment = req.body.attachment[0].url;
+            leaveapplication.fileName = req.body.attachment[0].fileName;
+        }
+        if(opsTeam){
+            leaveapplication.opsTeamId = opsTeam._id;
+        }
+        console.log("leave: ",leaveapplication);
+        var apply = new userHoliday(leaveapplication);
+        apply.save(function(err,applied){
+            if(err){
+                console.log("ree: ",err);
+             return res.status(500).json({
+                 success: false,
+                 data: err,
+                 message:"Something went wrong!"
+             });
+            }else{
+                console.log("in else");
+             return res.status(201).json({
+                 success: true,
+                 data: applied,
+                 message:"Successfully saved!"
+             });
+            }
+        });
+       }catch(e){
+        return res.status(500).json({
+            success: false,
+            data: e,
+            message:"Something went wrong!"
+        });
+       } 
+   }
+
+   async getMyLeaves(req,res){
+       //In this api , neet to also give swop /no swop status to show and hide swop buttons on mobile
+       let userrequested = req.user._id;
+       try{
+         
+        const leaves1 = await userHoliday.find({userId:userrequested},{_id:1,fromdate:1,todate:1,username:1,type:1,status:1,isSwapable:1});
+       
+        let leaves = JSON.stringify(leaves1);
+        leaves = JSON.parse(leaves);
+
+       for(let l=0;l<=leaves.length-1;l++){
+          
+           var datePartsss = leaves[l].fromdate.split("-");
+           var dateParteee = leaves[l].todate.split("-");
+           let startdd = new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+           let enddd = new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1); 
+           const leaveswaprequest = await swopRequests.find({userTo:req.user._id, leaveTo:leaves[l]._id});
+            if(leaveswaprequest && leaveswaprequest.length>0){
+                leaves[l].isSwapRequest = true;
+                let pendings= leaveswaprequest.filter(x=>x.requestStatus == 1);
+                if(pendings.length>0){
+                    leaves[l].swapCount = pendings.length;
+                }
+            }
+        try{
+            var days = Math.floor((enddd - startdd) / (1000*60*60*24));
+            leaves[l].days = days+1;
+        }catch(e){
+            return res.status(500).json({
+                success: false,
+                data: e,
+                message:"Something went wrong!"
+            });
+        }
+      
+       }
+
+        return res.status(201).json({
+            success: true,
+            data: leaves,
+            message:"received!"
+        });
+       }catch(e){
+            return res.status(500).json({
+            success: false,
+            data: e,
+            message:"Something went wrong!"
+        });
+       }
+
+   }
+
+     // Upload social banner image
+     async uploadAtachment(req, res) {
+        try {
+            if (!req.file) {
+                return __.out(res, 300, `No File is Uploaded`);
+            }
+            // const result = await __.scanFile(req.file.filename, `public/uploads/leaves/${req.file.filename}`);
+            // if (!!result) {
+            //     return __.out(res, 300, result);
+            // }
+            return __.out(res, 201, {
+                filePath: `uploads/leaves/${req.file.filename}`
+            });
+        } catch (error) {
+            __.log(error);
+            return __.out(res, 500, error);
+        };
+    }
+
+    async getLeaveById(req,res){
+        let leaveId = req.params.id;
+
+        try{
+            const leave = await userHoliday.findOne({_id:leaveId},{userId:1,username:1,fromdate:1,todate:1,attachment:1,isSwapable:1,type:1});
+            return res.status(201).json({
+                success: true,
+                data: leave,
+                message:"received!"
+            });
+        }catch(e){
+            return res.status(500).json({
+                success: false,
+                data: e,
+                message:"Something went wrong!"
+            });
+        }
+    }
+
+    async updateLeave(req,res){
+        try{
+            console.log("req,",req.body);
+            const currentLeave = await userHoliday.findOne({_id:req.body._id});
+            console.log("curr leave: ",currentLeave);
+            let data={opsGroupId:currentLeave.opsGroupId,userId:req.user._id,fromdate:req.body.fromdate,todate:req.body.todate,idis:currentLeave._id};
+           var check = await this.checkForDateOverlapWhenApply(data);
+           if(check==0){
+            return res.status(300).json({
+                success: false,
+                data:check,
+                message:"Dates overlapping!"
+             });
+           }else{
+              console.log("in else");
+               if(currentLeave){
+                   console.log("Here currentleave is: ",currentLeave);
+                  let log= currentLeave.logs;
+                  var myLog = {
+                      updatedBy:req.user.name,
+                      message:2, //1-Allocation 2- Change date 3-cancellation,
+                      fromdate:currentLeave.fromdate,
+                      todate:currentLeave.todate,
+                      fromCurrentdate:req.body.fromdate,
+                      toCurrentdate:req.body.todate
+                   }
+                   log.push(myLog);
+                   var from = currentLeave.fromdate;
+                   currentLeave.logs = log;
+                   currentLeave.fromdate = req.body.fromdate;
+                   currentLeave.todate = req.body.todate;
+                   currentLeave.type = req.body.type;
+                   currentLeave.isSwapable = req.body.isSwapable;
+                   //currentLeave.attachment = req.body.isSwapable;
+                   await currentLeave.save();
+                   return res.status(201).json({
+                    success: true,
+                    data: currentLeave,
+                    message:"Updated Successfully!"
+                });
+                  
+               }else{
+                  res.status(203).json({status: false, data: null, message: "Sorry ! couldnt find similar data"});
+               }
+           }
+            
+        }catch(e){
+           res.status(501).json({status: false, data: null, message: "Something went wrong!"});                                
+        }
+    }
+
+
+    async checkIfHasParent(ballotid){
+    console.log("parat alao");
+        let currentBallot = await Ballot.findOne({_id:ballotid},{parentBallot:1,childBallots:1});
+        if(!currentBallot){
+            //console.logs("NO ballot found");
+        }else{
+            //console.logs("in else of current data found");
+            if(currentBallot.parentBallot){
+                console.log("here in parent checkbaga baga");
+                //console.logs("in if of parent data",currentBallot.parentBallot);
+                return this.checkIfHasParent(currentBallot.parentBallot)
+            }
+            if(currentBallot.childBallots && currentBallot.childBallots.length>0){
+                console.log("here baga baga");
+                let list=[];
+                list.push(currentBallot._id);
+                list=list.concat(currentBallot.childBallots);
+                console.log("list s: ",list);
+                
+                return list;
+            }
+        }
+    }
+
+    async getSwapDetailChanges(req,res){
+        let reqdata = req.body;
+        let slotDates;
+        let ballot;
+        let leave;
+        let wons=[];
+        if(reqdata.ballotId){
+             ballot = await Ballot.findOne({_id:reqdata.ballotId},{weekRange:1,wonStaff:1,childBallots:1,parentBallot:1});
+             var ballotList=[];
+             if(ballot.parentBallot){
+                ballotList = await this.checkIfHasParent(ballot._id);
+             }
+             if(ballot.childBallots && ballot.childBallots.length>0){
+                ballotList.push(ballot._id); 
+                ballotList = ballotList.concat(ballot.childBallots);
+             }
+             if(!ballot.parentBallot && !ballot.childBallots.length>0){
+                ballotList.push(ballot._id);
+             }
+             console.log("ballotList is: ",ballotList);
+             
+             for(let b=0;b<=ballotList.length-1;b++){
+                 let bb = await Ballot.findOne({_id:ballotList[b]},{wonStaff:1});
+               
+                 wons=wons.concat(bb.wonStaff);
+             }
+
+           slotDates={start:ballot.weekRange[reqdata.slotNo].start,end:ballot.weekRange[reqdata.slotNo].end};
+        }else{
+             leave = await userHoliday.findOne({_id:reqdata.leaveId});
+             let frm = leave.fromdate.split('-');
+             frm=frm[2]+'-'+frm[1]+'-'+frm[0];
+             let tm = leave.todate.split('-');
+             tm=tm[2]+'-'+tm[1]+'-'+tm[0];
+            slotDates={start:frm,end:tm};
+          }
+         
+        
+          const ops = await OpsGroup.findOne({userId:req.user._id,isDelete:false},{opsGroupName:1,swopSetup:1,userId:1});
+            // .populate({path:'userId',select:'name staffId'});
+            if(ops){
+                // let swopSetup = parseInt(ops.swopSetup);
+                // let users = [];
+                // console.log("in ops",ops);
+                // if(swopSetup==1){
+                //     users = ops.userId;
+                // }else{
+                //     const opsTeam = await OpsTeam.findOne({userId:req.user._id,isDeleted:false},{userId:1})
+                //     .populate({path:'userId',select:'name staffId'});
+                //     if(opsTeam){
+                //         users = opsTeam.userId;
+                //     }else{
+                //         return res.status(300).json({
+                //             success: false,
+                //             data: null,
+                //             message:"Couldn't find ops group data of you."
+                //         });
+                //     }
+                // }
+                const currentuser = await User.findOne({_id:req.user._id},{_id:0,parentBussinessUnitId:1}).populate(
+                    {
+                        path: "parentBussinessUnitId",
+                        select: "name",
+                        populate: {
+                            path: "sectionId",
+                            select: "name",
+                            populate: {
+                                path: "departmentId",
+                                select: "name",
+                                populate:{
+                                    path:"companyId",select:"name"
+                                }
+                            }
+                        }
+                    }
+                    )
+                let BU= currentuser.parentBussinessUnitId.sectionId.departmentId.companyId.name+" > "+currentuser.parentBussinessUnitId.sectionId.departmentId.name+" > "
+                +currentuser.parentBussinessUnitId.sectionId.name+" > "+currentuser.parentBussinessUnitId.name;
+                let resObj = {};
+                if(reqdata.ballotId){
+                    //group weeks wonstaff
+                    //let finalWonStaff = groupBy(ballot.wonStaff, 'weekNo');
+                    let finalWonStaff = groupBy(wons, 'weekNo');
+                    resObj.Bu = BU,
+                    resObj.opsName= ops.opsGroupName;
+                    resObj.opsGroupId=ops._id;
+                    resObj.type='Balloted-Block';
+                    resObj.leavedays=5;
+                    resObj.currentdates= slotDates;
+                    resObj.slotNo=reqdata.slotNo;
+                   // resObj.users=users;
+                    resObj.ballotId=reqdata.ballotId;
+                    resObj.weekRange = [];
+                    for(let key of Object.entries(finalWonStaff)){
+                        let range = {
+                            start:ballot.weekRange[parseInt(key)].start,
+                            end:ballot.weekRange[parseInt(key)].end,
+                            slotNo:parseInt(key)
+                        }
+                        resObj.weekRange.push(range);
+                    }
+                    
+             }else{
+               
+                const casualAlocated = await userHoliday.find({type:{$in:[2,3]},status:'Allocated',userId:{$in:ops.userId}});
+                resObj.Bu = BU;
+                resObj.opsName = ops.opsGroupName;
+                resObj.opsGroupId = ops._id;
+                if(leave.type==3){
+                    resObj.type='Block';
+                }
+                if(leave.type==2){
+                    resObj.type='Casual';
+                }
+                if(leave.type==4){
+                    resObj.type='Special';
+                }
+                var datePartsss = leave.fromdate.split("-");
+                var dateParteee = leave.todate.split("-");
+                let startdd = new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+                let enddd = new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1);            
+                var days = Math.floor((enddd - startdd) / (1000*60*60*24));
+                 days = days+1;
+                resObj.leavedays = days;
+                resObj.currentdates = slotDates;
+               // resObj.users=users,
+                resObj.leaveId=reqdata.leaveId;
+                resObj.weekRange = [];
+                for(let key=0;key<=casualAlocated.length-1;key++){
+                    let from = casualAlocated[key].fromdate.split('-');
+                    from = from[2]+'-'+from[1]+'-'+from[0];
+                    let to = casualAlocated[key].todate.split('-');
+                    to = to[2]+'-'+to[1]+'-'+to[0];
+                    let range = {
+                        start:from,
+                        end:to
+                    }
+                    resObj.weekRange.push(range);    
+                }
+                
+
+                function removeDuplicates(originalArray, objKey, objKey1) {
+                    var trimmedArray = [];
+                    var values = [];
+                    var value; var val1;
+                  
+                    for(var i = 0; i < originalArray.length-1; i++) {
+                      value = {start:originalArray[i][objKey],end:originalArray[i][objKey1]};
+                      var val1 = JSON.stringify(value);
+                      if(values.indexOf(val1) === -1) {
+                        trimmedArray.push(originalArray[i]);
+                        values.push(val1);
+                      }
+                    }
+                  
+                    return trimmedArray;
+                  
+                  }
+                 var trrObject=  removeDuplicates(resObj.weekRange, 'start','end');
+                 resObj.weekRange = trrObject;
+             }
+                return res.status(201).json({
+                    success: true,
+                    data: resObj,
+                    message:"received!"
+                });
+            }else{
+                return res.status(300).json({
+                    success: false,
+                    data: null,
+                    message:"Couldn't find ops group data of you."
+                });
+            }
+      
+            function groupBy(xs, key) {
+                return xs.reduce(function (rv, x) {
+                    (rv[x[key]] = rv[x[key]] || []).push(x);
+                    return rv;
+                }, {});
+            };
+       
+    }
+
+    async getslotswonByUser(req,res){
+        if(req.body.ballotId){
+            let wons=[];
+            const ballot = await Ballot.findOne({_id:req.body.ballotId},{wonStaff:1,weekRange:1,childBallots:1,parentBallot:1});
+            var ballotList=[];
+            if(ballot.parentBallot){
+               ballotList = await this.checkIfHasParent(ballot._id);
+            }
+            if(ballot.childBallots && ballot.childBallots.length>0){
+               ballotList.push(ballot._id); 
+               ballotList = ballotList.concat(ballot.childBallots);
+            }
+            if(!ballot.parentBallot && !ballot.childBallots.length>0){
+               ballotList.push(ballot._id);
+            }
+            console.log("ballotList is: ",ballotList);
+            
+            for(let b=0;b<=ballotList.length-1;b++){
+                let bb = await Ballot.findOne({_id:ballotList[b]},{wonStaff:1});
+               
+                wons = wons.concat(bb.wonStaff);
+            }
+
+            let users = [];
+            const ops = await OpsGroup.findOne({userId:req.user._id,isDelete:false},{opsGroupName:1,swopSetup:1,userId:1})
+            .populate({path:'userId',select:'name staffId'});
+            if(ops){
+                let swopSetup = parseInt(ops.swopSetup);
+                if(swopSetup==1){
+                    users = ops.userId;
+                }else{
+                    const opsTeam = await OpsTeam.findOne({userId:req.user._id,isDeleted:false},{userId:1})
+                    .populate({path:'userId',select:'name staffId'});
+                    if(opsTeam){
+                        users = opsTeam.userId;
+                    }else{
+                        return res.status(300).json({
+                            success: false,
+                            data: null,
+                            message:"Couldn't find ops group data of you."
+                        });
+                    }
+                }
+               
+                if(wons.length>0){
+                   
+                    let usersBySlots = wons.filter(wq=>parseInt(wq.weekNo)==parseInt(req.body.slotNo));
+                   // console.log("userBu slot id:",usersBySlots);
+                    let resArr=[];
+                    if(usersBySlots && usersBySlots.length>0 && users.length>0){
+                       
+                        for(let i=0;i<=users.length-1;i++){
+                           
+                            let filteringUser = usersBySlots.filter(wq=>wq.userId.toString()==users[i]._id.toString());
+                           
+                            if(filteringUser && filteringUser.length>0){
+                               
+                               resArr.push(users[i]);
+                            }
+                        }
+                    }
+                  
+                    return res.status(201).json({
+                        success: true,
+                        data: resArr,
+                        message:"received!"
+                    });
+                }else{
+                    return res.status(300).json({
+                        success: false,
+                        data: null,
+                        message:"Couldn't find requested ballots and won users."
+                    });
+                }
+
+            }else{
+                return res.status(300).json({
+                    success: false,
+                    data: null,
+                    message:"Couldn't find ops group data of you."
+                });
+            }
+           
+        }else{
+            let dates =[];
+          var startDate = req.body.start.split("-");
+          startDate = startDate[2]+'-'+startDate[1]+'-'+startDate[0];
+          startDate = startDate.split("-");
+         let startdd = new Date(+startDate[2], startDate[1] - 1, +startDate[0]+1); 
+        
+         let endDate= req.body.end.split("-");
+         endDate = endDate[2]+'-'+endDate[1]+'-'+endDate[0];
+         endDate= endDate.split("-");
+         let enddd = new Date(+endDate[2], endDate[1] - 1, +endDate[0]+1)
+        
+         //check in that dates.
+         dates = getDateArray(startdd,enddd)
+         console.log("DAtes: ",dates);
+            const ops = await OpsGroup.findOne({_id:req.body.opsGroupId},{opsGroupName:1,userId:1});
+            
+            const userleaves = await userHoliday.find({userId: {$in:ops.userId},type:req.body.leaveType,status:'Allocated'})
+            .populate([{path:'userId',select:'name staffId'}]);
+            console.log("userleaves: ",userleaves);
+           
+            if(userleaves && userleaves.length>0){
+                let resArr=[];
+                for(let i=0;i<=userleaves.length-1;i++){
+                    var dateInLeave = [];
+                    var startleave = userleaves[i].fromdate.split("-");
+                   let startddleave = new Date(+startleave[2], startleave[1] - 1, +startleave[0]+1); 
+                   console.log("startddleave : ",startddleave);
+ 
+                   let endleave= userleaves[i].todate.split("-");
+                   let endddleave = new Date(+endleave[2], endleave[1] - 1, +endleave[0]+1)
+                   console.log("endddleave : ",endddleave);
+          
+              //check in that dates.
+              dateInLeave = getDateArray(startddleave,endddleave)
+                console.log("DAtes: ",dateInLeave);
+                var check = findCommonElement(dates, dateInLeave)
+                console.log(check);
+                if(check==true){
+                    const sapData = await StaffSapData.findOne({staff_Id:userleaves[i].userId._id},{ballotLeaveBalanced:1});
+                    let currObj ={};
+                    currObj.type = userleaves[i].type;
+                    currObj.leaveId = userleaves[i]._id;
+                    currObj._id=userleaves[i].userId._id;
+                    currObj.name = userleaves[i].userId.name;
+                    currObj.staffId = userleaves[i].userId.staffId;
+                    currObj.ballotBalance = sapData.ballotLeaveBalanced;
+                    resArr.push(currObj);
+                }
+                    
+                }
+                return res.status(201).json({
+                    success: true,
+                    data: resArr,
+                    message:"received!"
+                });
+            }else{
+                return res.status(300).json({
+                    success: false,
+                    data: null,
+                    message:"Couldn't find requested users leaves."
+                });
+            }
+
+            function getDateArray(start, end) {
+                console.log("In get dates : ");
+                var
+                  arr = new Array(),
+                  dt = new Date(start);
+              
+                while (dt <= end) {
+                    console.log("in while....");
+                  arr.push(new Date(dt));
+                  dt.setDate(dt.getDate() + 1);
+                }
+                console.log("At array: ",arr);
+                return arr;
+              
+              }
+
+              function findCommonElement(array1, array2) { 
+                for(let i = 0; i < array1.length; i++) { 
+                    for(let j = 0; j < array2.length; j++) {
+                        if(array1[i].toString() == array2[j].toString()) { 
+                          console.log("inside of if");
+                            // Return if common element found 
+                            return true; 
+                        } 
+                    } 
+                } 
+                  
+                // Return if no common element exist 
+                return false;  
+            }
+        }
+    
+    }
+
+    async saveSwopRequest(req,res){
+        let reqObject = req.body;
+        if(reqObject.ballotId){
+            let requiredResult = await __.checkRequiredFields(req, ['ballotId','userFrom','userTo','slotNumberFrom','slotNumberTo','opsGroupId']);
+            if (requiredResult.status == false) {
+                return res.status(300).json({
+                    success: false,
+                    data:null,
+                    message:"Missing Fields Error!"
+                 });
+            }else{
+                const ballot = await Ballot.findOne({_id:reqObject.ballotId},{wonStaff:1,childBallots:1,parentBallot:1});
+                var ballotList=[];
+                let wons=[];
+             if(ballot.parentBallot){
+                ballotList = await this.checkIfHasParent(ballot._id);
+             }
+             if(ballot.childBallots && ballot.childBallots.length>0){
+                ballotList.push(ballot._id); 
+                ballotList = ballotList.concat(ballot.childBallots);
+             }
+             if(!ballot.parentBallot && !ballot.childBallots.length>0){
+                ballotList.push(ballot._id);
+             }
+             console.log("ballotList is: ",ballotList);
+             
+             for(let b=0;b<=ballotList.length-1;b++){
+                 let bb = await Ballot.findOne({_id:ballotList[b]},{wonStaff:1});
+                 wons = wons.concat(bb.wonStaff);
+             }
+                if(wons.length>0){
+                    let filteredFrom = wons.filter(xs=> xs.userId.toString() == reqObject.userFrom.toString() && parseInt(xs.weekNo)==parseInt(reqObject.slotNumberTo));
+                  console.log("filters from: ",filteredFrom);
+                    if(filteredFrom.length>0){
+
+                        return res.status(300).json({
+                            success: false,
+                            data:null,
+                            message:"You already have won this slot!!"
+                         });
+                    }
+
+                    let filterdTo = wons.filter(xs=> xs.userId.toString() == reqObject.userTo.toString() && parseInt(xs.weekNo)==parseInt(reqObject.slotNumberFrom));
+                   
+                    console.log("filters to: ",filterdTo);            
+                    if(filterdTo.length>0){
+                        return res.status(300).json({
+                            success: false,
+                            data:null,
+                            message:"He already has the slot you are requesting"
+                         });
+                    }
+    
+                }
+                const ballotExistsRequests = await swopRequests.find({userFrom:req.user._id,slotNumberTo:reqObject.slotNumberTo,requestStatus:1,ballotId:{$in:ballotList}});
+                if(ballotExistsRequests && ballotExistsRequests.length>0){
+                    return res.status(300).json({
+                        success: false,
+                        data:null,
+                        message:"You have already sent a request for these dates."
+                     });
+                }
+                let oobj = new swopRequests(reqObject);
+                oobj.save(async function (err, resObj) {
+                    if (err) {
+                        return res.status(500).json({
+                            success: false,
+                            data:err,
+                            message:"Something went wrong!!"
+                         });
+                    }else{
+    
+                        res.status(201).json({
+                            success: true,
+                            data:resObj,
+                            message:"Saved!!"
+                         });
+                         const user = await User.findOne({_id:reqObject.userTo},{_id:0,deviceToken:1});
+                         let usersDeviceTokens=[]; var dd = new Date();
+                         if(user && user.deviceToken){
+                             console.log("USER: ",user);
+                             usersDeviceTokens.push(user.deviceToken);
+                             var collapseKey = resObj._id;
+                             let notificationObj = {
+                                     title: 'Leave Swap Request.',
+                                     body: 'You have Leave Swap request',
+                                     bodyText: 'You have Leave Swap request',
+                                     bodyTime: dd,
+                                     bodyTimeFormat: ['DD-MMM-YYYY HH:mm'],
+                               }
+                          
+                             FCM.push(usersDeviceTokens, notificationObj, collapseKey);
+                             console.log("sent"); 
+                          }
+                    }
+                    
+                  });
+            }
+        }
+        else{
+            let requiredResult = await __.checkRequiredFields(req, ['userFrom','userTo','opsGroupId','leaveFrom','leaveTo']);
+            if (requiredResult.status == false) {
+                return res.status(300).json({
+                    success: false,
+                    data:null,
+                    message:"Missing Fields Error!"
+                 });
+            }else{
+                const requestsswoping = await swopRequests.find({userFrom: req.user._id,leaveTo:reqObject.leaveTo,requestStatus:1});
+                if(requestsswoping.length>0){
+                    return res.status(300).json({
+                        success: false,
+                        data:null,
+                        message:"You have already sent request for this leave dates!"
+                     });
+                }
+
+                let oobj = new swopRequests(reqObject);
+                oobj.save(async function (err, resObj) {
+                    if (err) {
+                        return res.status(500).json({
+                            success: false,
+                            data:err,
+                            message:"Something went wrong!!"
+                         });
+                    }else{
+    
+                        res.status(201).json({
+                            success: true,
+                            data:resObj,
+                            message:"Saved!!"
+                         });
+                         const user = await User.findOne({_id:reqObject.userTo},{_id:0,deviceToken:1});
+                         let usersDeviceTokens=[]; var dd = new Date();
+                         if(user && user.deviceToken){
+                             console.log("USER: ",user);
+                             usersDeviceTokens.push(user.deviceToken);
+                             var collapseKey = holiday._id;
+                             let notificationObj = {
+                                     title: 'Leave Swap Request.',
+                                     body: 'You have Leave Swap request',
+                                     bodyText: 'You have Leave Swap request',
+                                     bodyTime: dd,
+                                     bodyTimeFormat: ['DD-MMM-YYYY HH:mm'],
+                               }
+                          
+                             FCM.push(usersDeviceTokens, notificationObj, collapseKey);
+                             console.log("sent"); 
+                          }
+                    }
+                    
+                  });
+            }
+        }
+       
+    }
+    async getMyReceivedSwapRequests(req,res){
+        let reqdata =req.body;
+        if(reqdata.ballotId){
+            const ballotdd = await Ballot.findOne({_id:reqdata.ballotId});
+            var ballotList=[];
+            if(ballotdd.parentBallot){
+               ballotList = await this.checkIfHasParent(ballotdd._id);
+            }
+            if(ballotdd.childBallots && ballotdd.childBallots.length>0){
+               ballotList.push(ballotdd._id); 
+               ballotList = ballotList.concat(ballotdd.childBallots);
+            }
+            if(!ballotdd.parentBallot && !ballotdd.childBallots.length>0){
+               ballotList.push(ballotdd._id);
+            }
+            console.log("ballotList is: ",ballotList);
+            const swapRequests = await swopRequests.find({userTo:reqdata.userId,slotNumberTo:reqdata.slotNo,ballotId:{$in:ballotList}})
+            .populate([{path:'userFrom',select:'name staffId'},{path:'opsGroupId',select:'opsGroupName'}]);
+           
+           let resdata=[];
+           if(swapRequests.length>0){
+               
+               const ballot = await Ballot.findOne({_id:reqdata.ballotId},{weekRange:1});
+               for(let i=0;i<=swapRequests.length-1;i++){
+   
+                   let slotDates={start:ballot.weekRange[swapRequests[i].slotNumberFrom].start,end:ballot.weekRange[swapRequests[i].slotNumberFrom].end};
+                   const user = await User.findOne({_id:swapRequests[i].userFrom._id},{_id:0,parentBussinessUnitId:1}).populate(
+                       {
+                           path: "parentBussinessUnitId",
+                           select: "name",
+                           populate: {
+                               path: "sectionId",
+                               select: "name",
+                               populate: {
+                                   path: "departmentId",
+                                   select: "name",
+                                   populate:{
+                                       path:"companyId",select:"name"
+                                   }
+                               }
+                           }
+                       })
+                   let BU= user.parentBussinessUnitId.sectionId.departmentId.companyId.name+" > "+user.parentBussinessUnitId.sectionId.departmentId.name+" > "
+                   +user.parentBussinessUnitId.sectionId.name+" > "+user.parentBussinessUnitId.name;
+                   let data ={};
+                   data.Bu = BU;
+                   data.opsName= swapRequests[i].opsGroupId.opsGroupName;
+                   data.opsGroupId=swapRequests[i].opsGroupId._id;
+                   data.type='Balloted';
+                   data.leavedays=5;
+                   data.slotNoFor = swapRequests[i].slotNumberFrom;
+                   data.ballotId=reqdata.ballotId;
+                   data.currentdates= {start:ballot.weekRange[reqdata.slotNo].start,end:ballot.weekRange[reqdata.slotNo].end};
+                   data.slotToExchange = slotDates;
+                   data.users = swapRequests[i].userFrom;
+                   data.ballotId=reqdata.ballotId;
+                   data.swapRequestId=swapRequests[i]._id;
+                   data.requestStatus = swapRequests[i].requestStatus;
+                   resdata.push(data);
+   
+               }
+               return res.status(201).json({
+                   success: true,
+                   data: resdata,
+                   message:"received!"
+               });
+           }else{
+               return res.status(300).json({
+                   success: false,
+                   data: null,
+                   message:"Couldn't find swap requests for this slot."
+               });
+           }
+        }else{
+            const swapRequests = await swopRequests.find({userTo:reqdata.userId,leaveTo:reqdata.leaveId})
+            .populate([{path:'userFrom',select:'name staffId'},{path:'opsGroupId',select:'opsGroupName'},
+            {path:'leaveFrom',select:'fromdate todate type status'},
+            {path:'leaveTo',select:'fromdate todate type status'}]);
+           console.log("swapreq", swapRequests);
+           let resdata=[];
+           if(swapRequests.length>0){
+            for(let i=0;i<=swapRequests.length-1;i++){
+            
+                var startslotdate = swapRequests[i].leaveFrom.fromdate.split("-");
+                startslotdate=startslotdate[2]+'-'+startslotdate[1]+'-'+startslotdate[0];
+                var endslotdate = swapRequests[i].leaveFrom.todate.split("-");
+                endslotdate=endslotdate[2]+'-'+endslotdate[1]+'-'+endslotdate[0];
+                let slotDates={start:startslotdate,end:endslotdate};
+                const user = await User.findOne({_id:swapRequests[i].userFrom._id},{_id:0,parentBussinessUnitId:1}).populate(
+                    {
+                        path: "parentBussinessUnitId",
+                        select: "name",
+                        populate: {
+                            path: "sectionId",
+                            select: "name",
+                            populate: {
+                                path: "departmentId",
+                                select: "name",
+                                populate:{
+                                    path:"companyId",select:"name"
+                                }
+                            }
+                        }
+                    })
+                let BU= user.parentBussinessUnitId.sectionId.departmentId.companyId.name+" > "+user.parentBussinessUnitId.sectionId.departmentId.name+" > "
+                +user.parentBussinessUnitId.sectionId.name+" > "+user.parentBussinessUnitId.name;
+                let data ={};
+                data.Bu = BU;
+                data.opsName= swapRequests[i].opsGroupId.opsGroupName;
+                data.opsGroupId=swapRequests[i].opsGroupId._id;
+                if(swapRequests[i].leaveFrom.type==3){
+                    data.type='Block';
+                }
+                if(swapRequests[i].leaveFrom.type==2){
+                    data.type='Casual';
+                }
+                if(swapRequests[i].leaveFrom.type==4){
+                    data.type='Special';
+                }
+                var datePartsss = swapRequests[i].leaveFrom.fromdate.split("-");
+                var dateParteee = swapRequests[i].leaveFrom.todate.split("-");
+                let startdd = new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+                let enddd = new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1);            
+                var days = Math.floor((enddd - startdd) / (1000*60*60*24));
+                 days = days+1;
+                data.leavedays=days;
+                data.slotNoFor = reqdata.slotNo;
+                data.leaveId=reqdata.leaveId;
+
+                var Toslotdate = swapRequests[i].leaveTo.fromdate.split("-");
+                Toslotdate=Toslotdate[2]+'-'+Toslotdate[1]+'-'+Toslotdate[0];
+                var Toendslotdate = swapRequests[i].leaveTo.todate.split("-");
+                Toendslotdate=Toendslotdate[2]+'-'+Toendslotdate[1]+'-'+Toendslotdate[0];
+
+                data.currentdates= {start:Toslotdate,end:Toendslotdate};
+                data.slotToExchange = slotDates;
+                data.users = swapRequests[i].userFrom;
+               // data.ballotId=reqdata.ballotId;
+                data.swapRequestId=swapRequests[i]._id;
+                data.requestStatus = swapRequests[i].requestStatus;
+                resdata.push(data);
+
+            }
+            return res.status(201).json({
+                success: true,
+                data: resdata,
+                message:"received!"
+            });
+           }else{
+                return res.status(300).json({
+                   success: false,
+                   data: null,
+                   message:"Couldn't find swap requests for this slot."
+               });
+           }
+        }
+      
+    }
+
+    async acceptSwopRequest(req,res){
+        let data = req.body;
+        const swopReq = await swopRequests.findOne({_id:data.requestId});
+       
+        if(!swopReq){
+            return res.status(300).json({
+                success: false,
+                data: null,
+                message:"Couldn't find swap request."
+            });
+        }else{
+            if(data.action==2){
+                if(swopReq.ballotId){
+                    const ballot = await Ballot.findOne({_id:swopReq.ballotId},{weekRange:1,wonStaff:1,parentBallot:1,childBallots:1});
+                    var ballotList=[];
+                    if(ballot.parentBallot){
+                       ballotList = await this.checkIfHasParent(ballot._id);
+                    }
+                    if(ballot.childBallots && ballot.childBallots.length>0){
+                       ballotList.push(ballot._id); 
+                       ballotList = ballotList.concat(ballot.childBallots);
+                    }
+                    if(!ballot.parentBallot && !ballot.childBallots.length>0){
+                       ballotList.push(ballot._id);
+                    }
+                    console.log("ballotList is: ",ballotList);
+                    var updations =[];
+                    for(let b=0;b<=ballotList.length-1;b++){
+                        let bb = await Ballot.findOne({_id:ballotList[b]},{wonStaff:1});
+                         let myWons = bb.wonStaff;
+                        let indexFrom = myWons.findIndex(x => x.userId.toString() == swopReq.userFrom.toString() && parseInt(x.weekNo) == parseInt(swopReq.slotNumberFrom));
+                         console.log("indexfrom: ",indexFrom);
+                        if(indexFrom== -1){
+                         console.log("kuch nahi A..");
+                        
+                        }else{
+                         console.log("indexfrom if ");
+                         updations.push({id:bb._id,indexFrom:indexFrom});
+                        }
+                        let indexTo = myWons.findIndex(x => x.userId.toString() == swopReq.userTo.toString() && parseInt(x.weekNo) == parseInt(swopReq.slotNumberTo));
+                        console.log("indexTo: ",indexTo);
+                        if(indexTo== -1){
+                           console.log("kuch nahi B..");
+                            
+                          }else{
+                             console.log("indexto if ");
+                             updations.push({id:bb._id,indexTo:indexTo});
+                          }
+                     }
+                
+                     console.log("updations: ",updations);
+                 // if(ballot.wonStaff.length>0){
+                 //     let myWons = ballot.wonStaff;
+                 //    let indexFrom = myWons.findIndex(x => x.userId.toString() ==swopReq.userFrom.toString() && parseInt(x.weekNo) == parseInt(swopReq.slotNumberFrom));
+                 //    console.log("index from is: ",indexFrom);
+                 //    let indexTo = myWons.findIndex(x => x.userId.toString() ==swopReq.userTo.toString() && parseInt(x.weekNo) == parseInt(swopReq.slotNumberTo));
+                 //    console.log("index to is: ",indexTo);
+                 //    if(indexFrom == -1 || indexTo == -1){
+                 //     return res.status(300).json({
+                 //         success: false,
+                 //         data: null,
+                 //         message:"similar slot number did not find."
+                 //     });
+                 //    }else{
+                 //        myWons[indexFrom].weekNo = swopReq.slotNumberTo;
+                 //        myWons[indexTo].weekNo = swopReq.slotNumberFrom;
+                 //        ballot.wonStaff = myWons;
+                 //        await ballot.save();
+                 //        swopReq.requestStatus = 2
+                 //        await swopReq.save();
+ 
+                 //        const otherSwopRequests = await swopRequests.find({userTo:req.user._id,ballotId:ballot._id,slotNumberTo:swopReq.slotNumberTo,requestStatus:1},{_id:1,userTo:1});
+                 //        if(otherSwopRequests.length>0){
+                 //         console.log("otherSwopRequests: ",otherSwopRequests);
+                 //         let ids=[];
+                 //          for(let element = 0;element<=otherSwopRequests.length-1;element++){
+                 //             ids.push(otherSwopRequests[element]._id);
+                 //          }
+                 //          await swopRequests.update(
+                 //             { _id: { $in: ids } },
+                 //             { $set: { requestStatus : 3 } },
+                 //             {multi: true}
+                 //          )
+                 //        }
+                 //        return res.status(201).json({
+                 //            success: true,
+                 //            data: swopReq,
+                 //            message:"updated!."
+                 //        });
+                 //    }
+                 // }
+                 if(updations.length>0){
+                     for(let u=0;u<=updations.length-1;u++){
+                         console.log("updations: ",updations[u]);
+                         
+                         if(updations[u].indexFrom){
+                             console.log("in index From if condition");
+                             const ball = await Ballot.findOne({_id:updations[u].id},{weekRange:1,wonStaff:1});
+                            let mywons = ball.wonStaff;
+                             mywons[updations[u].indexFrom].weekNo = swopReq.slotNumberTo;
+                             ball.wonStaff = mywons;
+                             await ball.save();
+                                console.log("mywons saved in: ",ball._id);
+                         }
+                         if(updations[u].indexTo){
+                             console.log("in index To if condition");
+                             const ball = await Ballot.findOne({_id:updations[u].id},{weekRange:1,wonStaff:1});
+                             let mywons = ball.wonStaff;
+                             mywons[updations[u].indexTo].weekNo = swopReq.slotNumberFrom;
+                             ball.wonStaff = mywons;
+                             await ball.save();
+                            console.log("mywons saved in: ",ball._id);
+                         }
+                     }
+                     swopReq.requestStatus = 2;
+                     await swopReq.save();
+                         const otherSwopRequests = await swopRequests.find({userTo:req.user._id,ballotId:ballot._id,slotNumberTo:swopReq.slotNumberTo,requestStatus:1},{_id:1,userTo:1});
+                         if(otherSwopRequests.length>0){
+                          console.log("otherSwopRequests: ",otherSwopRequests);
+                          let ids=[];
+                           for(let element = 0;element<=otherSwopRequests.length-1;element++){
+                              ids.push(otherSwopRequests[element]._id);
+                           }
+                           await swopRequests.update(
+                              { _id: { $in: ids } },
+                              { $set: { requestStatus : 3 } },
+                              {multi: true}
+                           )
+                         }
+                         return res.status(201).json({
+                             success: true,
+                             data: swopReq,
+                             message:"updated!."
+                         });
+                     
+                 }
+                 else{
+                     return res.status(300).json({
+                         success: false,
+                         data: null,
+                         message:"No won staff found"
+                     });
+                 }
+                }
+                else{
+                   
+                    const leaveTo = await userHoliday.findOne({_id:swopReq.leaveTo},{fromdate:1,todate:1});
+                    const leaveFrom = await userHoliday.findOne({_id:swopReq.leaveFrom},{fromdate:1,todate:1});
+                     
+                    //check diffrences of leaves
+                    //For leaveTodats here
+                    var dateLeaveToPartsss = leaveTo.fromdate.split("-");
+                    var dateLeaveToParteee = leaveTo.todate.split("-");
+                    let startLeaveTodd = new Date(+dateLeaveToPartsss[2], dateLeaveToPartsss[1] - 1, +dateLeaveToPartsss[0]+1); 
+                    let endLeaveTodd = new Date(+dateLeaveToParteee[2], dateLeaveToParteee[1] - 1, +dateLeaveToParteee[0]+1);            
+                    var LeaveTodays = Math.floor((endLeaveTodd - startLeaveTodd) / (1000*60*60*24));
+                    LeaveTodays = LeaveTodays+1;
+                    
+                     var dateLeaveFromPartsss = leaveFrom.fromdate.split("-");
+                     var dateLeaveFromParteee = leaveFrom.todate.split("-");
+                     let startLeaveFromdd = new Date(+dateLeaveFromPartsss[2], dateLeaveFromPartsss[1] - 1, +dateLeaveFromPartsss[0]+1); 
+                     let endLeaveFromdd = new Date(+dateLeaveFromParteee[2], dateLeaveFromParteee[1] - 1, +dateLeaveFromParteee[0]+1);            
+                     var LeaveFromdays = Math.floor((endLeaveFromdd - startLeaveFromdd) / (1000*60*60*24));
+                     LeaveFromdays = LeaveFromdays+1;
+                     
+                    
+                    if(LeaveFromdays == LeaveTodays){
+                        console.log("sssame");
+                    }
+                    if(LeaveFromdays > LeaveTodays){
+                        console.log("From is greater");
+                        var diff = LeaveFromdays - LeaveTodays;
+                        let updateduserFrom = await StaffSapData.update({staff_Id:swopReq.userFrom},{$inc: {ballotLeaveBalanced: diff}});
+                        let updateduserTo = await StaffSapData.update({staff_Id:swopReq.userTo},{$inc: {ballotLeaveBalanced: -diff}});
+                    }
+                    if(LeaveFromdays < LeaveTodays){
+                        console.log("From is lesser");
+                        var diff = LeaveFromdays - LeaveTodays;
+                        let updateduserFrom = await StaffSapData.update({staff_Id:swopReq.userFrom},{$inc: {ballotLeaveBalanced: -diff}});
+                        let updateduserTo = await StaffSapData.update({staff_Id:swopReq.userTo},{$inc: {ballotLeaveBalanced: diff}});
+                    }
+                    
+                    //Exchange Actual leaves
+                    //LevaeFrom
+                    const userFrom = await User.findOne({_id:swopReq.userFrom},{name:1,staffId:1});
+                    const opsTmFrom = await OpsTeam.findOne({userId: userFrom._id,isDeleted:false},{_id:1});
+                    leaveTo.userId = userFrom._id;
+                    leaveTo.username = userFrom.name;
+                    if(opsTmFrom){
+                        leaveTo.opsTeamId = opsTmFrom._id;
+                    }
+                    await leaveTo.save();
+
+                    const userTo = await User.findOne({_id:swopReq.userTo},{name:1,staffId:1});
+                    const opsTmTo = await OpsTeam.findOne({userId: userTo._id,isDeleted:false},{_id:1});
+                    leaveFrom.userId = userTo._id;
+                    leaveFrom.username = userTo.name;
+                    if(opsTmTo){
+                        leaveFrom.opsTeamId = opsTmFrom._id;
+                    }
+                    await leaveFrom.save();
+
+                    swopReq.requestStatus = 2
+                    await swopReq.save();
+
+
+                    return res.status(201).json({
+                        success: true,
+                        data: swopReq,
+                        message:"updated!."
+                    });
+                }
+         
+               
+            }else{
+                //Reject
+                swopReq.requestStatus = 3
+                await swopReq.save();
+                return res.status(201).json({
+                    success: true,
+                    data: swopReq,
+                    message:"updated!."
+                });
+                
+            }
+        } 
+    }
+
+    async getMyTeamMembers(req,res){
+        try{
+        let reqObj= req.body;
+        let users=[];
+        let data={};
+        const opsGrp = await OpsGroup.findOne({userId:req.user._id,isDelete:false},{userId:1,swopSetup:1,opsGroupName:1}).populate([
+            {
+                path:"opsTeamId",
+                select:["name","_id","userId"]
+            },
+            {
+                path:"userId",
+                select:["_id","name","staffId"]
+            }
+        ]);
+        
+        if(!opsGrp){
+            return res.status(300).json({
+                success: false,
+                data: null,
+                message:"Couldn't find ops group data of you."
+            });
+        }else{
+            let swopsetup = parseInt(opsGrp.swopSetup);
+            data.opsGroupId = opsGrp._id;
+            data.opsName = opsGrp.opsGroupName;
+            if(swopsetup == 0 || swopsetup == 1 ){
+                users = opsGrp.userId;
+            }else{
+                const opsTm = await OpsTeam.findOne({userId:req.user._id,isDeleted:false},{userId:1,name:1}).populate([
+                    {
+                        path:"userId",
+                        select:["_id","name","staffId"]
+                    }
+                ]);
+                if(opsTm && opsTm.userId.length>0){
+                    users = opsTm.userId;
+                    data.opsTeamId = opsTm._id;
+                    data.opsTeamName = opsTm.name;
+                }else{
+                    users = opsGrp.userId;
+                }
+            }
+
+            const Ballots = await Ballot.find({opsGroupId : opsGrp._id,isCanceled:false},{_id:1,ballotName:1,ballotStartDate:1,ballotEndDate:1,weekRange:1,wonStaff:1});   
+            console.log("Ballots List is: ",Ballots.length);
+            var bbBallots =[];
+            var dateParts = reqObj.date.split("-");
+            var dateObject = new Date(+dateParts[2], dateParts[1] - 1, +dateParts[0]+1); 
+            for(let bb=0;bb<=Ballots.length-1;bb++){
+                let from = new Date(Ballots[bb].ballotStartDate);
+                let to = new Date(Ballots[bb].ballotEndDate);
+                if((dateObject <= to && dateObject >= from)) {
+                   
+                    //find wons amongst these now
+                    for(let dm=0;dm<=Ballots[bb].weekRange.length-1;dm++){
+                        let start = new Date(Ballots[bb].weekRange[dm].start);
+                        let end = new Date(Ballots[bb].weekRange[dm].end);
+                        let end1 = nextDayUTC(end);
+                       
+                        //to add day in end date found from end date of ballot weekRange.
+                       function nextDayUTC(d) {
+                        var aDay = 1440 * 60 * 1000;
+                        var d2 = new Date( Math.trunc((d.getTime() + aDay)/aDay)*aDay);
+                        return d2;
+                      }
+
+
+                        if(dateObject <= end1 && dateObject >= start){
+                            
+                            var wondate;
+                            if(data.opsTeamId){
+                            wondate = Ballots[bb].wonStaff.filter(ws=>ws.opsGroupId == data.opsGroupId && ws.opsTeamId==data.opsTeamId && ws.weekNo == dm);
+                            }else{
+                              
+                             wondate = Ballots[bb].wonStaff.filter(ws=>ws.opsGroupId.toString() == data.opsGroupId.toString() && parseInt(ws.weekNo) == parseInt(dm));
+                            }
+                           
+                            //loop on wondate and add ballot Id in each object here for further apis to use.
+                            for(let ff=0;ff<=wondate.length-1;ff++){
+                                wondate[ff].ballotId = Ballots[bb]._id;
+                            }
+                            bbBallots = bbBallots.concat(wondate);
+                            break;
+                        }   
+                    }
+                    console.log("In if of date range yep!!");
+                   // bbBallots.push(Ballots[bb]);
+                }else{
+                    console.log("not in that date range");
+                }
+            }
+        
+            let allUsers =[];
+            if(bbBallots.length>0){
+             
+                for(let u=0;u<=bbBallots.length-1;u++){
+                    const userd = await User.findOne({_id:bbBallots[u].userId},{_id:1,name:1,staffId:1}).populate({path:'appointmentId',select:'name'});
+                    let user = {};
+                     user._id = userd._id;
+                     user.appointmentId=userd.appointmentId;
+                     user.name=userd.name;
+                     user.staffId=userd.staffId;
+                     user.weekNo=bbBallots[u].weekNo;
+                    user.ballotId = bbBallots[u].ballotId;
+                    allUsers.push(user);
+                }
+            }
+            console.log("ALL USERS: ",allUsers);
+
+
+            //Leaves data
+            let userOnHoliday;
+            if(data.opsTeamId){
+                userOnHoliday = await userHoliday.find({opsGroupId:data.opsGroupId,opsTeamId: data.opsTeamId}).populate([
+                    {
+                       
+                            path: "userId",
+                            select: "name staffId",
+                            populate: {
+                                path: "appointmentId",
+                                select: "name",
+                            }
+                        }
+                ]);
+            }else{
+                userOnHoliday = await userHoliday.find({opsGroupId:data.opsGroupId}).populate([
+                    {
+                       
+                            path: "userId",
+                            select: "name staffId",
+                            populate: {
+                                path: "appointmentId",
+                                select: "name",
+                            }
+                        }
+                ]);;
+            }
+
+           
+            //    let userOnHoliday= await userHoliday.find({opsGroupId:data.opsGroupId,opsTeamId: data.opsTeamId}).populate({path:"userId",select:"staffId"});
+                userOnHoliday = userOnHoliday.reduce(
+                    function(accumulator, currentValue) {
+                        if(currentValue.todate){
+                        var datePartsss = currentValue.fromdate.split("-");
+                        var dateParteee = currentValue.todate.split("-");
+                        let startdd = new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+                        let enddd = new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1); 
+                        if((dateObject <= enddd && dateObject >= startdd)){
+                            console.log("Motha if");
+                            accumulator.push(currentValue);
+                        }
+                        // if(currentValue.fromdate == data.date || currentValue.todate == data.date){
+                        //     accumulator.push(currentValue);
+                        // }
+                     }else{
+                        if(currentValue.fromdate == data.date){
+                            console.log("else cha if");
+                            accumulator.push(currentValue);
+                        }
+                     }
+                     return accumulator;
+                    },[]);
+
+                    userOnHoliday=userOnHoliday.filter(uu=>uu.status!=='cancelled');
+                    allUsers = allUsers.concat(userOnHoliday);
+                    var Users =[];
+                    for(let k=0;k<=allUsers.length-1;k++){
+                        if(allUsers[k].ballotId){
+                            Users.push(allUsers[k]);
+                        }else{
+                            var user ={};
+                            user.leaveId = allUsers[k]._id;
+                            user._id = allUsers[k].userId._id;
+                            user.appointmentId=allUsers[k].userId.appointmentId;
+                            user.name=allUsers[k].userId.name;
+                            user.staffId=allUsers[k].userId.staffId;
+                            Users.push(user);
+                        }
+                    }
+                    return res.status(201).json({
+                        success: true,
+                        data: Users,
+                        message:"Received!."
+                    });
+        }
+       }catch(e){
+        return res.status(500).json({
+            success: false,
+            data: e,
+            message:"Something went Wrong!."
+        });
+       }
+    }
+
+    async getLeaveDetails(req,res){
+        let reqObject = req.body;
+        const ops = await OpsGroup.findOne({userId:req.body.userId,isDelete:false},{_id:1,opsGroupName:1});
+        const user = await User.findOne({_id:req.body.userId},{_id:0,parentBussinessUnitId:1,name:1,staffId:1,email:1,profilePicture:1,contactNumber:1}).populate([
+           {
+               path: "parentBussinessUnitId",
+               select: "name",
+               populate: {
+                   path: "sectionId",
+                   select: "name",
+                   populate: {
+                       path: "departmentId",
+                       select: "name",
+                       populate:{
+                           path:"companyId",select:"name"
+                       }
+                   }
+               }
+           },{
+               path:'appointmentId',
+               select:"name"
+           }
+        ])
+       let BU= user.parentBussinessUnitId.sectionId.departmentId.companyId.name+" > "+user.parentBussinessUnitId.sectionId.departmentId.name+" > "
+       +user.parentBussinessUnitId.sectionId.name+" > "+user.parentBussinessUnitId.name;
+      
+        if(reqObject.ballotId){
+            const ballot = await Ballot.findOne({_id:reqObject.ballotId},{weekRange:1});
+            if(!ballot){
+                return res.status(300).json({
+                    success: false,
+                    data: null,
+                    message:"Couldn't find leave for this user."
+                });
+            }else{
+                let useResponse ={};
+                 
+                useResponse.Bu = BU,
+                useResponse.opsName = ops.opsGroupName;
+                useResponse.form = ballot.weekRange[reqObject.weekNo].start;
+                useResponse.To = ballot.weekRange[reqObject.weekNo].end;
+                useResponse.contactNumber=user.contactNumber;
+                useResponse.profilePicture=user.profilePicture;
+                useResponse.email=user.email;
+                useResponse.staffId=user.staffId;
+                useResponse.name=user.name;
+                useResponse.appointment = user.appointmentId.name;
+                useResponse.type='Balloted - Block';
+
+                return res.status(201).json({
+                    success: true,
+                    data: useResponse,
+                    message:"data received!."
+                });
+            }
+        }else{
+            const leave = await userHoliday.findOne({_id:reqObject.leaveId},{fromdate:1,todate:1,type:1});
+            if(!leave){
+                return res.status(300).json({
+                    success: false,
+                    data: null,
+                    message:"Couldn't find leave for this user."
+                });
+            }else{
+                let useResponse ={};
+                let fromsplit = leave.fromdate.split('-');
+                fromsplit = fromsplit[2]+ '-'+fromsplit[1]+ '-'+fromsplit[0];
+                let tosplit = leave.todate.split('-');
+                tosplit = tosplit[2]+ '-'+tosplit[1]+ '-'+tosplit[0];
+                useResponse.Bu = BU,
+                useResponse.opsName = ops.opsGroupName;
+                useResponse.form = fromsplit;
+                useResponse.To = tosplit;
+                useResponse.contactNumber=user.contactNumber;
+                useResponse.profilePicture=user.profilePicture;
+                useResponse.email=user.email;
+                useResponse.staffId=user.staffId;
+                useResponse.name=user.name;
+                useResponse.appointment = user.appointmentId.name;
+                if(leave.type==2){
+                    useResponse.type='Casual Leave';
+                }
+                if(leave.type==3){
+                    useResponse.type='Block Leave';
+                }
+                if(leave.type==4){
+                    useResponse.type='Special Leave';
+                }
+                return res.status(201).json({
+                    success: true,
+                    data: useResponse,
+                    message:"data received!."
+                });
+            }
+
+        }
+    }
+
+    async getSwapLogs(req,res){
+        try{
+            let reqdata = req.body;
+            if(reqdata.ballotId){
+                
+                const ballot = await Ballot.findOne({_id:reqdata.ballotId},{weekRange:1});
+                const swapRequests1 = await swopRequests.find({ballotId:reqdata.ballotId,
+                    $or:[
+                        {$and:[{userFrom:reqdata.userId},{slotNumberTo:reqdata.weekNo}]}
+                        ,{$and:[{userTo:reqdata.userId},{slotNumberFrom:reqdata.weekNo}]}
+                      ]
+                      ,requestStatus:2}).populate([
+                    {
+                        path:'userTo',
+                        select:'name staffId'
+                    },
+                    {
+                        path:'opsGroupId',
+                        select:'opsGroupName opsTeamId'
+                    },
+                    {
+                        path:'userFrom',
+                        select:'name staffId'
+                    },
+                    {
+                        path:'ballotId',
+                        select:'ballotName'
+                    }
+                ]);
+                let swapRequests = JSON.stringify(swapRequests1);
+                swapRequests = JSON.parse(swapRequests);
+                let resdata = [];
+                for(let i=0;i<=swapRequests.length-1;i++){
+                    console.log("in here");
+                    
+                    if(swapRequests[i].userFrom._id.toString()==reqdata.userId.toString()){
+                        console.log("in first if");
+                        if(swapRequests[i].opsGroupId.opsTeamId.length>0){
+                            const Tm = await OpsTeam.findOne({userId: swapRequests[i].userTo._id,isDeleted:false},{name:1});
+                            swapRequests[i].teamName = Tm.name;
+                        }
+                        
+                        swapRequests[i].status = "Sent";
+                        swapRequests[i].formdate = ballot.weekRange[swapRequests[i].slotNumberFrom].start;
+                        swapRequests[i].todate = ballot.weekRange[swapRequests[i].slotNumberFrom].end;
+                        
+                    }
+                    if(swapRequests[i].userTo._id.toString()==reqdata.userId.toString()){
+                        console.log("in second if");
+                        if(swapRequests[i].opsGroupId.opsTeamId.length>0){
+                            const Tm = await OpsTeam.findOne({userId: swapRequests[i].userFrom._id,isDeleted:false},{name:1});
+                            swapRequests[i].teamName = Tm.name;
+                        }
+                        
+                        swapRequests[i].status = "Received";
+                        swapRequests[i].formdate = ballot.weekRange[swapRequests[i].slotNumberTo].start;
+                        swapRequests[i].todate = ballot.weekRange[swapRequests[i].slotNumberTo].end;
+                       
+                    }
+                   
+                    
+                    console.log("pushing the data");
+                    resdata.push(swapRequests[i]);
+                }
+                res.status(201).json({status: true, data: resdata, message: "Received!"});
+
+            }else{
+
+            }
+
+        }catch(e){
+            res.status(203).json({status: false, data: null, message: "something went wrong!"});
+        }
+    }
+
+    async getMySentSwapRequests(req,res){
+        let reqdata =req.body;
+        if(reqdata.ballotId){
+            const swapRequests = await swopRequests.find({userFrom:reqdata.userId,slotNumberFrom:reqdata.slotNo,ballotId:reqdata.ballotId})
+            .populate([{path:'userTo',select:'name staffId'},{path:'opsGroupId',select:'opsGroupName'}]);
+           
+           let resdata=[];
+           if(swapRequests.length>0){
+               
+               const ballot = await Ballot.findOne({_id:reqdata.ballotId},{weekRange:1});
+               for(let i=0;i<=swapRequests.length-1;i++){
+   
+                   let slotDates={start:ballot.weekRange[swapRequests[i].slotNumberTo].start,end:ballot.weekRange[swapRequests[i].slotNumberTo].end};
+                   const user = await User.findOne({_id:swapRequests[i].userTo._id},{_id:0,parentBussinessUnitId:1}).populate(
+                       {
+                           path: "parentBussinessUnitId",
+                           select: "name",
+                           populate: {
+                               path: "sectionId",
+                               select: "name",
+                               populate: {
+                                   path: "departmentId",
+                                   select: "name",
+                                   populate:{
+                                       path:"companyId",select:"name"
+                                   }
+                               }
+                           }
+                       });
+                       console.log("user found is: ",user);
+                   let BU= user.parentBussinessUnitId.sectionId.departmentId.companyId.name+" > "+user.parentBussinessUnitId.sectionId.departmentId.name+" > "
+                   +user.parentBussinessUnitId.sectionId.name+" > "+user.parentBussinessUnitId.name;
+
+                   let data ={};
+                   data.Bu = BU;
+                   data.opsName= swapRequests[i].opsGroupId.opsGroupName;
+                   data.opsGroupId=swapRequests[i].opsGroupId._id;
+                   data.type='Balloted-Block';
+                   data.leavedays=5;
+                   data.slotNoFor = swapRequests[i].slotNumberTo;
+                   data.ballotId=reqdata.ballotId;
+                   data.currentdates= {start:ballot.weekRange[reqdata.slotNo].start,end:ballot.weekRange[reqdata.slotNo].end};
+                   data.slotToExchange = slotDates;
+                   data.users = swapRequests[i].userTo;
+                   data.ballotId=reqdata.ballotId;
+                   data.swapRequestId=swapRequests[i]._id;
+                   data.requestStatus = swapRequests[i].requestStatus;
+                   resdata.push(data);
+   
+               }
+               return res.status(201).json({
+                   success: true,
+                   data: resdata,
+                   message:"received!"
+               });
+           }else{
+               return res.status(300).json({
+                   success: false,
+                   data: null,
+                   message:"Couldn't find swap requests for this slot."
+               });
+           }
+        }else{
+            const swapRequests = await swopRequests.find({userFrom:reqdata.userId,leaveFrom:reqdata.leaveId})
+            .populate([{path:'userTo',select:'name staffId'},{path:'opsGroupId',select:'opsGroupName'},{path:'leaveFrom',select:'fromdate todate type status'},{path:'leaveTo',select:'fromdate todate type status'}]);
+           console.log("Wop requests: ",swapRequests);
+           let resdata=[];
+           if(swapRequests.length>0){
+            for(let i=0;i<=swapRequests.length-1;i++){
+                var startslotdate = swapRequests[i].leaveFrom.fromdate.split("-");
+                startslotdate=startslotdate[2]+'-'+startslotdate[1]+'-'+startslotdate[0];
+                var endslotdate = swapRequests[i].leaveFrom.todate.split("-");
+                endslotdate=endslotdate[2]+'-'+endslotdate[1]+'-'+endslotdate[0];
+                let slotDates={start:startslotdate,end:endslotdate};
+                
+                const user = await User.findOne({_id:swapRequests[i].userTo._id},{_id:0,parentBussinessUnitId:1}).populate(
+                    {
+                        path: "parentBussinessUnitId",
+                        select: "name",
+                        populate: {
+                            path: "sectionId",
+                            select: "name",
+                            populate: {
+                                path: "departmentId",
+                                select: "name",
+                                populate:{
+                                    path:"companyId",select:"name"
+                                }
+                            }
+                        }
+                    })
+                let BU= user.parentBussinessUnitId.sectionId.departmentId.companyId.name+" > "+user.parentBussinessUnitId.sectionId.departmentId.name+" > "
+                +user.parentBussinessUnitId.sectionId.name+" > "+user.parentBussinessUnitId.name;
+                let data ={};
+                data.Bu = BU;
+                data.opsName= swapRequests[i].opsGroupId.opsGroupName;
+                data.opsGroupId=swapRequests[i].opsGroupId._id;
+                if(swapRequests[i].leaveFrom.type==3){
+                    data.type='Block';
+                }
+                if(swapRequests[i].leaveFrom.type==2){
+                    data.type='Casual';
+                }
+                if(swapRequests[i].leaveFrom.type==4){
+                    data.type='Special';
+                }
+                var datePartsss = swapRequests[i].leaveTo.fromdate.split("-");
+                var dateParteee = swapRequests[i].leaveTo.todate.split("-");
+                let startdd = new Date(+datePartsss[2], datePartsss[1] - 1, +datePartsss[0]+1); 
+                let enddd = new Date(+dateParteee[2], dateParteee[1] - 1, +dateParteee[0]+1);            
+                var days = Math.floor((enddd - startdd) / (1000*60*60*24));
+                 days = days+1;
+                data.leavedays=days;
+                data.slotNoFor = reqdata.slotNo;
+                data.leaveId=reqdata.leaveId;
+
+                var Toslotdate = swapRequests[i].leaveTo.fromdate.split("-");
+                Toslotdate=Toslotdate[2]+'-'+Toslotdate[1]+'-'+Toslotdate[0];
+                var Toendslotdate = swapRequests[i].leaveTo.todate.split("-");
+                Toendslotdate=Toendslotdate[2]+'-'+Toendslotdate[1]+'-'+Toendslotdate[0];
+
+                data.currentdates= {start:Toslotdate,end:Toendslotdate};
+               // data.currentdates= {start:swapRequests[i].leaveFrom.fromdate,end:swapRequests[i].leaveFrom.todate};
+              
+                data.slotToExchange = slotDates;
+                data.users = swapRequests[i].userTo;
+               // data.ballotId=reqdata.ballotId;
+                data.swapRequestId=swapRequests[i]._id;
+                data.requestStatus = swapRequests[i].requestStatus;
+                resdata.push(data);
+
+            }
+            return res.status(201).json({
+                success: true,
+                data: resdata,
+                message:"received!"
+            });
+           }else{
+                return res.status(300).json({
+                   success: false,
+                   data: null,
+                   message:"Couldn't find swap requests for this slot."
+               });
+           }
+        }
+      
+    }
+
+    async cancelMySwopRequest(req,res){
+        let swopId = req.params.id;
+        let updated = await swopRequests.update({_id:swopId},{$set:{requestStatus:4}});
+        if(updated){
+            res.status(201).json({status: true, data: updated, message: "Successfully updated."});                                
+        }else{
+            res.status(203).json({status: false, data: null, message: "couldn't update values"});                                
+        }
+       
+    }
+}
+
+async function autoTerminateSwapRequest(){
+    console.log("in auto cancel request");
+    const todayIs = new Date();
+    let weeksToApply=1;
+            let pageSettingData = await PageSettingModel.findOne({
+                companyId:"5a9d162b36ab4f444b4271c8",
+                status: 1
+            }).select('opsGroup').lean();
+            if(pageSettingData.opsGroup.minWeeksBeforeSwop){
+                weeksToApply = pageSettingData.opsGroup.minWeeksBeforeSwop;
+                console.log("pagesettngs weeks are: ",weeksToApply);
+            }
+    let totaldays = weeksToApply*7;
+    const swapList = await swopRequests.find({
+        requestStatus:1
+    });
+    if(swapList.length>0){
+        for(let i=0;i<=swapList.length-1;i++){
+            if(swapList[i].ballotId){
+                const ballot = await Ballot.findOne({_id:swapList[i].ballotId},{weekRange:1});
+                var reqFromdate = parseInt(swapList[i].slotNumberTo);
+                let startDt=ballot.weekRange[reqFromdate].start;
+                
+                let startdate = new Date(startDt);
+                var daysleft = Math.floor((startdate - todayIs) / (1000*60*60*24));
+                console.log("daysleft 1: ",daysleft);
+                daysleft = daysleft+1;
+                console.log("daysleft 2: ",daysleft);
+                console.log("startdate",startdate);
+                if(daysleft < 0 || daysleft<totaldays){
+                    let updated = await swopRequests.update({_id:swapList[i]._id},{$set:{requestStatus:5}});
+                }
+            }else{
+                
+                console.log(" ");
+                const leaveTo = await userHoliday.findOne({_id:swapList[i].leaveTo},{fromdate:1});
+                var leaveStart = leaveTo.fromdate.split("-");
+                leaveStart = new Date(+leaveStart[2], leaveStart[1] - 1, +leaveStart[0]+1); 
+                var daysleft = Math.floor((leaveStart - todayIs) / (1000*60*60*24));
+                console.log("daysleft 1: ",daysleft);
+                daysleft = daysleft+1;
+                console.log("daysleft 2: ",daysleft);
+                console.log("startdate",startdate);
+                if(daysleft < 0 || daysleft<totaldays){
+                    let updated = await swopRequests.update({_id:swapList[i]._id},{$set:{requestStatus:5}});
+                }
+
+            }
+        }
+    }
+
+    
+}
+
+
+let methods={};
+methods.autoTerminateSwapRequest = async function() {
+    console.log("in auto cancel request");
+    const todayIs = new Date();
+    let weeksToApply=1;
+            let pageSettingData = await PageSettingModel.findOne({
+                companyId:"5a9d162b36ab4f444b4271c8",
+                status: 1
+            }).select('opsGroup').lean();
+            if(pageSettingData.opsGroup.minWeeksBeforeSwop){
+                weeksToApply = pageSettingData.opsGroup.minWeeksBeforeSwop;
+                console.log("pagesettngs weeks are: ",weeksToApply);
+            }
+    let totaldays = weeksToApply*7;
+    const swapList = await swopRequests.find({
+        requestStatus:1
+    });
+    if(swapList.length>0){
+        for(let i=0;i<=swapList.length-1;i++){
+            if(swapList[i].ballotId){
+                const ballot = await Ballot.findOne({_id:swapList[i].ballotId},{weekRange:1});
+                var reqFromdate = parseInt(swapList[i].slotNumberTo);
+                let startDt=ballot.weekRange[reqFromdate].start;
+                
+                let startdate = new Date(startDt);
+                var daysleft = Math.floor((startdate - todayIs) / (1000*60*60*24));
+                console.log("daysleft 1: ",daysleft);
+                daysleft = daysleft+1;
+                console.log("daysleft 2: ",daysleft);
+                console.log("startdate",startdate);
+                if(daysleft < 0 || daysleft<totaldays){
+                    let updated = await swopRequests.update({_id:swapList[i]._id},{$set:{requestStatus:5}});
+                }
+            }else{
+                console.log(" ");
+                const leaveTo = await userHoliday.findOne({_id:swapList[i].leaveTo},{fromdate:1});
+                var leaveStart = leaveTo.fromdate.split("-");
+                leaveStart = new Date(+leaveStart[2], leaveStart[1] - 1, +leaveStart[0]+1); 
+                var daysleft = Math.floor((leaveStart - todayIs) / (1000*60*60*24));
+                console.log("daysleft 1: ",daysleft);
+                daysleft = daysleft+1;
+                console.log("daysleft 2: ",daysleft);
+                console.log("startdate",startdate);
+                if(daysleft < 0 || daysleft<totaldays){
+                    let updated = await swopRequests.update({_id:swapList[i]._id},{$set:{requestStatus:5}});
+                }
+            }
+        }
+    }
+
+};
+new CronJob({
+    cronTime: '0 18 * * *',
+    onTick: function () {
+        console.log('yuup')
+        autoTerminateSwapRequest();
+        //Your code that is to be executed on every midnight
+    },
+    start: true,
+    runOnInit: false
+});
+
+opsleave = new opsLeave();
+module.exports = opsleave;
+module.exports.myMethod= methods;
+

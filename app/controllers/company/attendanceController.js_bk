@@ -1,0 +1,576 @@
+const mongoose = require('mongoose'),
+    Shift = require('../../models/shift'),
+    ShiftDetails = require('../../models/shiftDetails'),
+    ShiftLog = require('../../models/shiftLog'),
+    User = require('../../models/user'),
+    Attendance = require('../../models/attendance'),
+    FacialData = require('../../models/facialData');
+var moment = require( 'moment' );
+const __ = require('../../../helpers/globalFunctions');
+class attendanceController {
+
+    async add(req, res) {
+        console.log(new Date());
+        let endDate = new Date();
+        let startDate = new Date();
+        console.log('date', endDate);
+        endDate = endDate.setHours(endDate.getHours() + 12);
+        endDate = new Date(endDate);
+        startDate = startDate.setHours(startDate.getHours() - 12);
+        startDate = new Date(startDate);
+        ShiftDetails.findOne({
+                confirmedStaffs: {$in: [mongoose.Types.ObjectId(req.body.userId)]},
+                _id: mongoose.Types.ObjectId(req.body.shiftDetailId),
+                shiftId: mongoose.Types.ObjectId(req.body.shiftId)
+            },
+            {date: 1, startTime: 1, endTime: 1, shiftId: 1, duration: 1})
+            .then((shiftDetail) => {
+                if (shiftDetail) {
+                    let shfitStartTime = new Date(shiftDetail.startTime);
+                    shfitStartTime = shfitStartTime.setDate(new Date(shfitStartTime).getDate() - 1);
+                    console.log('shfitEndTime', new Date(shfitStartTime));
+                    var diff = (new Date(shfitStartTime) - new Date());
+                    let min = Math.floor((diff / 1000) / 60);
+                    console.log('min1', min);
+                    if (shiftDetail.isExtendedShift) {
+                        const shiftExtendedObj = shiftDetail.extendedStaff.filter((i) => {
+                            return i.userId.toString() === req.body.userId;
+                        });
+                        if(shiftExtendedObj.length > 0) {
+                            let exshfitStartTime = new Date(shiftExtendedObj[0].startDateTime);
+                            var diff = (new Date(exshfitStartTime) - new Date());
+                            min = Math.floor((diff / 1000) / 60);
+                        }
+                    }
+                    console.log('min2', min);
+                    //min < 60
+                    if (true) {
+                        Attendance.find({
+                            shiftDetailId: mongoose.Types.ObjectId(req.body.shiftDetailId),
+                            shiftId: mongoose.Types.ObjectId(req.body.shiftId),
+                            userId: mongoose.Types.ObjectId(req.body.userId)
+                        })
+                            .then((attendanceResult) => {
+                                console.log(attendanceResult, 'attendanceResult')
+                                if (attendanceResult.length === 0) {
+                                    if (req.body.attendanceMode === 'Facial Failed') {
+                                        req.body.status = 4;
+                                    } else if (req.body.attendanceMode === 'QR Failed') {
+                                        req.body.status = 5;
+                                    } else {
+                                        req.body.clockInDateTime = new Date();
+                                    }
+                                    console.log('req.body.clockInDateTime', req.body.clockInDateTime);
+                                    delete req.body.breakTime;
+                                    new Attendance(req.body).save().then((result) => {
+                                        console.log(result);
+                                        if (req.body.status === 4) {
+                                            return res.json({
+                                                status: 4,
+                                                data: result,
+                                                message: req.body.attendanceMode
+                                            });
+                                        }
+                                        return res.json({status: 1, data: result, message: "Attendance clock in"});
+                                    });
+                                } else {
+                                    console.log('aaaa00');
+                                    if (req.body.attendanceMode === 'Facial Failed') {
+                                        req.body.status = 4;
+                                    } else if (req.body.attendanceMode === 'QR Failed') {
+                                        req.body.status = 5;
+                                    } else {
+                                        req.body.clockInDateTime = new Date();
+                                    }
+                                    delete req.body.breakTime;
+
+                                    console.log(req.body);
+                                    Attendance.findOneAndUpdate({
+                                        shiftDetailId: mongoose.Types.ObjectId(req.body.shiftDetailId),
+                                        shiftId: mongoose.Types.ObjectId(req.body.shiftId),
+                                        userId: mongoose.Types.ObjectId(req.body.userId)
+                                    }, {
+                                        $set: {
+                                            attendanceMode: req.body.attendanceMode,
+                                            clockInDateTime: req.body.clockInDateTime, status: req.body.status
+                                        }
+                                    }, {new: true}).then((result) => {
+                                        console.log(result);
+                                        if (req.body.status === 4) {
+                                            return res.json({
+                                                status: 4,
+                                                data: result,
+                                                message: req.body.attendanceMode
+                                            });
+                                        } else if (req.body.status === 5) {
+                                            return res.json({
+                                                status: 4,
+                                                data: result,
+                                                message: req.body.attendanceMode
+                                            });
+                                        }
+                                        return res.json({status: 1, data: result, message: "Attendance clock in"});
+                                    }).catch((err) => {
+                                        return res.json({status: 3, data: null, message: "Something went wrong3", err});
+                                    });
+                                    //return res.json({status:2, data: null, message: "Attendance already clock in"});
+                                }
+                            }).catch((err) => {
+                            return res.json({status: 3, data: null, message: "Something went wrong2", err});
+                        });
+                } else {
+                        return res.json({status:6, data: null, message: "You can't clocking before 1 hr"});
+                    }
+                } else {
+                    return res.json({status:2, data: null, message: "Shift Not found"});
+                }
+            }).catch((err)=>{
+            return res.json({status:3, data: null, message: "Something went wrong1", err});
+        });
+
+
+    }
+    async update(req, res) {
+        console.log(req.body);
+        delete req.body.userId;
+        delete req.body.shiftDetailId;
+        delete req.body._id;
+        delete req.body.shiftId;
+        const obj = req.body;
+        if(req.body.attendanceMode === 'Facial Failed'){
+            obj.status = 5;
+
+        }else if(req.body.attendanceMode === 'Qr Failed') {
+            obj.status = 6;
+
+        }else {
+            obj.status = 2;
+            obj.clockOutDateTime = new Date();
+        }
+        Attendance.findById(req.body.attendanceId).then((attendanceInfo)=>{
+            let duration = null;
+            if(obj.status === 2)
+             duration = (new Date() - attendanceInfo.clockInDateTime)/(1000*60*60);
+            Attendance.findOneAndUpdate({_id:mongoose.Types.ObjectId(req.body.attendanceId)},{
+                $set:{ clockOutDateTime: obj.clockOutDateTime, status: obj.status,duration
+                }
+            },{new: true}).then((result)=>{
+                console.log('result', result);
+                if(result)
+                    if(obj.status === 2)
+                    return res.json({status:1, data: result, message: "Attendance clock out successfully"});
+                    else
+                        return res.json({status:obj.status, data: result, message: "Attendance clock out failed"});
+
+                else
+                    return res.json({status:2, data: null, message: "No Clock in attendance found"});
+
+            }).catch((err)=>{
+                return res.json({status:3, data: null, message: "something went wrong"});
+            });
+
+        })
+
+    }
+    async updateBreakTime(req, res) {
+        //console.log(req.body);
+        const obj = req.body;
+        // let currentDate = new Date();
+        // const enddd = new Date();
+        // const startTime = obj.startTime.split(':');
+        // const endTime = obj.endTime.split(':');
+
+        var timeZone = moment.parseZone(req.body.startTime, 'MM-DD-YYYY HH:mm:ss Z').format('Z'),
+
+            startTimeDate = moment(req.body.startTime, 'MM-DD-YYYY HH:mm:ss Z').utc().format(),
+            endTimeDate = moment(req.body.endTime, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+        console.log(startTimeDate, endTimeDate);
+        var diff = Math.abs(new Date(startTimeDate) - new Date(endTimeDate));
+        const min = Math.floor((diff/1000)/60);
+        console.log('min', min);
+        ShiftDetails.findById(mongoose.Types.ObjectId(req.body.shiftDetailId),
+            {extendedStaff: 1, isExtendedShift:1, confirmedStaffs:1,startTime:1, endTime:1})
+            .then((shiftInfo)=>{
+              // console.log(shiftInfo);
+               let shfitEndTime = new Date(shiftInfo.endTime);
+               shfitEndTime = shfitEndTime.setDate(new Date(shfitEndTime).getDate());
+               console.log('shfitEndTime', new Date(shfitEndTime));
+               // shfitEndTime = shfitEndTime.getTime();
+               //const shfitStartTime = new Date(shiftInfo.startTime).getTime();
+                let shfitStartTime = new Date(shiftInfo.startTime);
+                shfitStartTime = shfitStartTime.setDate(new Date(shfitStartTime).getDate()-1);
+              //  shfitStartTime = shfitStartTime.getTime();
+                console.log('shfitStartTime', shfitStartTime);
+               const shiftBreakStartTime = new Date(startTimeDate).getTime();
+                const shiftBreakEndTime = new Date(endTimeDate).getTime();
+                console.log('shfitEndTime',new Date(shfitEndTime));
+                console.log('shiftBreakStartTime',new Date(shiftBreakStartTime));
+                console.log('shiftBreakEndTime',new Date(shiftBreakEndTime));
+                console.log('shfitStartTime',new Date(shfitStartTime));
+               if(shiftInfo.isExtendedShift) {
+                   const shiftExtendedObj = shiftInfo.extendedStaff.filter((i)=>{
+                      return i.userId.toString() ===  req.body.userId && i.confirmStatus === 2;
+                   });
+                   if(shiftExtendedObj.length > 0) {
+                       let exshfitEndTime = new Date(shiftExtendedObj[0].endDateTime);
+                     //  exshfitEndTime = exshfitEndTime.setDate(new Date(exshfitEndTime).getDate()-1);
+                       exshfitEndTime = new Date(exshfitEndTime).getTime();
+                       let exshfitStartTime = new Date(shiftExtendedObj[0].startDateTime).getTime();
+
+                     //  exshfitStartTime = exshfitStartTime.setDate(new Date(exshfitStartTime).getDate()-1);
+                       exshfitStartTime = new Date(exshfitStartTime).getTime();
+                        console.log("exshfitEndTime",exshfitEndTime);
+                       console.log("shiftBreakStartTime",shiftBreakStartTime);
+                       console.log("exshfitStartTime",exshfitStartTime);
+                       console.log("shiftBreakEndTime",shiftBreakEndTime);
+                       if ((minutesOfDay(exshfitEndTime) >= minutesOfDay(shiftBreakStartTime)) &&(minutesOfDay(shiftBreakStartTime) >= minutesOfDay(exshfitStartTime))
+                           && (minutesOfDay(exshfitEndTime) >= minutesOfDay(shiftBreakEndTime)) &&(minutesOfDay(shiftBreakEndTime) >= minutesOfDay(exshfitStartTime))
+                       ) {
+                           markBreakTime()
+                       } else {
+                          // markBreakTime()
+                           res.json({status: 4 , message: 'Break Time should be between shift time', data: null })
+                       }
+                   } else {
+                       console.log('aaa');
+                       console.log('shfitEndTime',new Date(shfitEndTime));
+                       console.log('shiftBreakStartTime',new Date(shiftBreakStartTime));
+                       console.log('shiftBreakEndTime',new Date(shiftBreakEndTime));
+                       console.log('shfitStartTime',new Date(shfitStartTime));
+                       //return res.json({a:new Date(shfitEndTime), b:new Date(shiftBreakStartTime),c:new Date(shfitStartTime),d:new Date(shiftBreakEndTime) })
+                       if ((minutesOfDay(shfitEndTime) >= minutesOfDay(shiftBreakStartTime)) &&(minutesOfDay(shiftBreakStartTime) >= minutesOfDay(shfitStartTime))
+                           && (minutesOfDay(shfitEndTime) >= minutesOfDay(shiftBreakEndTime)) &&(minutesOfDay(shiftBreakEndTime) >= minutesOfDay(shfitStartTime))
+                       ) {
+                          // return res.send('hey');
+                          markBreakTime();
+                       } else {
+                           //return res.send('hey1');
+                           //markBreakTime();
+                            res.json({status: 4 , message: 'Break Time should be between shift time', data: null })
+                       }
+                   }
+
+               }
+               else {
+                   console.log('bbbb');
+                   console.log('shfitEndTime',minutesOfDay(shfitEndTime));
+                   console.log('shiftBreakStartTime',minutesOfDay(shiftBreakStartTime));
+                   console.log('shiftBreakEndTime',minutesOfDay(shiftBreakEndTime));
+                   console.log('shfitStartTime',minutesOfDay(shfitStartTime));
+                   if ((minutesOfDay(shfitEndTime) >= minutesOfDay(shiftBreakStartTime)) &&(minutesOfDay(shiftBreakStartTime) >= minutesOfDay(shfitStartTime))
+                    && (minutesOfDay(shfitEndTime) >= minutesOfDay(shiftBreakEndTime)) &&(minutesOfDay(shiftBreakEndTime) >= minutesOfDay(shfitStartTime))
+                   ) {
+                       markBreakTime()
+                   } else {
+                       //markBreakTime()
+                       res.json({status: 4 , message: 'Break Time should be between shift time', data: null })
+                   }
+              }
+            }).catch((err)=>{
+                res.send(err)
+        });
+
+function minutesOfDay(m){
+            //console.log(m);
+            return new Date(m).getMinutes() + new Date(m).getHours() * 60;
+        }
+function markBreakTime() {
+    //        ,
+    //         status: {$in:[1,3,4]}
+    Attendance.findOneAndUpdate({
+        userId: mongoose.Types.ObjectId(req.body.userId),
+        shiftDetailId: mongoose.Types.ObjectId(req.body.shiftDetailId)
+    }, {
+        $push: {
+            "breakTime": {startTime: new Date(startTimeDate), endTime: endTimeDate, duration: min},
+        },
+        $inc: {totalBreakDuration: min}
+    }, {new: true}).then((result) => {
+        console.log('result', result);
+        if (result)
+            return res.json({status: 1, data: result, message: "Break Time Updated successfully"});
+        else
+            return res.json({status: 2, data: null, message: "No Clock in attendance found"});
+    }).catch((err) => {
+        return res.json({status: 3, data: null, message: "something went wrong"});
+    });
+}
+
+    }
+    async check(req, res) {
+        Attendance.find({userId: mongoose.Types.ObjectId(req.params.userId), shiftDetailId:
+            mongoose.Types.ObjectId(req.params.shiftDetailId)},{status:1, attendanceMode:1}).then((result)=>{
+                console.log('res', result);
+                if(result.length>0) {
+                    return res.json({status:1, data: result[0], message: "Attendance Found Successfully"});
+                }else {
+                    return res.json({status:2, data: result, message: "No Record found"});
+                }
+        }).catch((err)=>{
+            return res.json({status:3, data: null, message: "something went wrong"});
+        });
+    }
+    getShiftDetails(shiftId, shiftDetailId, userId){
+       return new Promise((resolve, reject)=>{
+           Shift.aggregate([{
+               $match: {
+                   _id: mongoose.Types.ObjectId(shiftId)
+               }
+           },
+               {
+                   $lookup: {
+                       from: 'shiftdetails',
+                       localField: '_id',
+                       foreignField: 'shiftId',
+                       as: 'shiftDetails',
+                   }
+               },
+               {
+                   $unwind: '$shiftDetails',
+               },
+               {$match: {'shiftDetails._id': mongoose.Types.ObjectId(shiftDetailId)}},
+
+               {
+                   $unwind: '$shiftDetails.confirmedStaffs',
+               },
+               {
+                   $lookup: {
+                       from: 'users',
+                       localField: 'shiftDetails.confirmedStaffs',
+                       foreignField: '_id',
+                       as: 'userInfo'
+                   }
+               },
+               {
+                   $unwind: '$userInfo',
+               },
+               {$match: {'userInfo._id': mongoose.Types.ObjectId(userId)}},
+               {
+                   $lookup: {
+                       from: 'schemes',
+                       localField: 'userInfo.schemeId',
+                       foreignField: '_id',
+                       as: 'schemeInfo'
+                   }
+               },
+               {
+                   "$unwind": {
+                       "path": "$schemeInfo",
+                       "preserveNullAndEmptyArrays": true
+                   }
+               },
+
+               {
+                   $project: {
+                       _id: 1,
+                       businessUnitId: 1,
+                       weekRangeStartsAt: 1,
+                       weekRangeEndsAt: 1,
+                       'userInfo.name': 1,
+                       'userInfo._id': 1,
+                       'userInfo.staffId': 1,
+                       'userInfo.contactNumber': 1,
+                       'userInfo.appointmentId': 1,
+                       'shiftDetails.startTime': 1,
+                       'shiftDetails.endTime': 1,
+                       'shiftDetails.day': 1,
+                       'shiftDetails.date': 1,
+                       'shiftDetails._id': 1,
+                       'shiftDetails.shiftId': 1,
+                       'shiftDetails.duration': 1,
+                       'shiftDetails.confirmedStaffs': 1,
+                       'shiftDetails.isExtendedShift': 1,
+                       'shiftDetails.isSplitShift': 1,
+                       'shiftDetails.isAssignShift': 1,
+                       'shiftDetails.extendedStaff': 1,
+                       'schemeInfo.shiftSetup': 1
+                   },
+               }
+
+
+           ]).then((results) => {
+                resolve(results)
+           }).catch((err)=>{
+                resolve([]);
+           });
+       });
+    }
+    async getStaffAddendance(req, res) {
+        console.log('here');
+        let results = await this.getShiftDetails(req.params.shiftId, req.params.shiftDetailId,req.params.userId);
+        let resultSplit = [];
+        if(req.params.splitShiftId !== '0') {
+            resultSplit = await this.getShiftDetails(req.params.shiftId, req.params.splitShiftId, req.params.userId);
+        }
+        if (results.length > 0) {
+                    results = results[0];
+                    Attendance.findOne({
+                        userId: results.userInfo._id,
+                        shiftDetailId: results.shiftDetails._id,
+                    }).then((attendance) => {
+                        if (results.shiftDetails.extendedStaff.length > 0) {
+                            results.shiftDetails.extendedStaff = results.shiftDetails.extendedStaff.filter((item) => {
+                                return item.userId.toString() === req.params.userId
+                            });
+                        }
+                        results.attendance = attendance;
+                        if(req.params.splitShiftId === '0') {
+                            return res.json({status: 1, message: 'Data Found', data: results});
+                        }else {
+                            results.splitShiftDetails = {};
+                            results.splitattendance = {};
+                            if(resultSplit.length > 0){
+                                results.splitShiftDetails = resultSplit[0].shiftDetails;
+                                Attendance.findOne({
+                                    userId: results.userInfo._id,
+                                    shiftDetailId: results.splitShiftDetails._id,
+                                }).then((attendance1) => {
+                                    if (results.splitShiftDetails.extendedStaff.length > 0) {
+                                        results.splitShiftDetails.extendedStaff = results.splitShiftDetails.extendedStaff.filter((item) => {
+                                            return item.userId.toString() === req.params.userId
+                                        });
+                                    }
+                                    results.splitattendance = attendance1;
+                                    return res.json({status: 1, message: 'Data Found', data: results});
+                                });
+                            }else {
+                                return res.json({status: 1, message: 'Data Found', data: results});
+                            }
+                            //return res.json({status: 1, message: 'Data Found Spplit', data: results});
+                        }
+                    }).catch((err) => {
+                        return res.json({status: 3, message: 'Something went wrong', data: null, err});
+                    });
+                } else {
+                    return res.json({status: 2, message: 'Data Not Found', data: null});
+                }
+
+    }
+    async getBreakTime(req, res) {
+        const shiftId= [];
+        shiftId.push(req.params.shiftDetailId);
+        console.log('req.params.splitShiftId',req.params.splitShiftId)
+        if(req.params.splitShiftId !== '0'){
+            shiftId.push(req.params.splitShiftId);
+        }
+        Attendance.find({userId: mongoose.Types.ObjectId(req.params.userId), shiftDetailId:{$in: shiftId}},
+            {status:1, attendanceMode:1, approval: 1, breakTime: 1, totalBreakDuration: 1, duration:1}).then((result)=>{
+            console.log('res', result);
+            if(result.length>0) {
+                //console.log(result[0].breakTime);
+                //console.log(result[1].breakTime)
+                if(result[1]){
+                    result[0].breakTime = result[0].breakTime.concat(result[1].breakTime)
+                }
+                return res.json({status:1, data: result[0], message: "Attendance Found Successfully"});
+            }else {
+                return res.json({status:2, data: result, message: "No Record found"});
+            }
+        }).catch((err)=>{
+            return res.json({status:3, data: null, message: "something went wrong"});
+        });
+    }
+    async deleteBreakTime(req, res) {
+        console.log(req.body);
+        Attendance.findOne({_id:req.body.attendanceId, breakTime:{$elemMatch: {_id:req.body.breakId}}}).then((attendanceObj)=>{
+            if(attendanceObj && attendanceObj.status === 1) {
+                let matchBreakTime = {};
+                const breakTimeArr = attendanceObj.breakTime.filter((item) => {
+                    if (item._id.toString() === req.body.breakId) {
+                        matchBreakTime = item;
+                    }
+                    return item._id.toString() !== req.body.breakId;
+                });
+                attendanceObj.totalBreakDuration -= matchBreakTime.duration;
+                attendanceObj.breakTime = breakTimeArr;
+                Attendance.replaceOne({_id:req.body.attendanceId}, attendanceObj).then((result)=>{
+                    res.json({success: true, message: 'Break Delete Successfully'});
+                });
+
+            }else {
+                res.json({success: false, message: 'Break time not found or attendance already clock out'});
+            }
+        });
+
+    }
+    async updateBreakTimeSplit(req, res) {
+        const obj = req.body;
+        console.log('sss', req.body.startTime);
+        var timeZone = moment.parseZone(req.body.startTime, 'MM-DD-YYYY HH:mm:ss Z').format('Z'),
+
+            startTimeDate = moment(req.body.startTime, 'MM-DD-YYYY HH:mm:ss Z').utc().format(),
+            endTimeDate = moment(req.body.endTime, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+        console.log(startTimeDate, endTimeDate);
+        let startDate = moment(req.body.startTime, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+        console.log('startDate before', startDate);
+        startDate = new Date(startDate).setHours(0,0,0,0);
+        console.log('startDate after', new Date(startDate));
+        var diff = Math.abs(new Date(startTimeDate) - new Date(endTimeDate));
+        const min = Math.floor((diff/1000)/60);
+        console.log('min', min);
+        ShiftDetails.find({_id:{$in:req.body.shiftIds}, confirmedStaffs: req.body.userId},
+            {extendedStaff: 1, isExtendedShift:1, confirmedStaffs:1,startTime:1, endTime:1})
+            .then((shiftInfo)=>{
+                console.log('shiftinfo', shiftInfo)
+                if(shiftInfo.length>0) {
+                    let shiftStartDate = new Date(shiftInfo[0].startTime).setHours(0,0,0,0);
+                    console.log('startDate11', shiftStartDate, new Date(shiftStartDate));
+                  //  if(startDate === shiftStartDate) {
+                        if (shiftInfo[0] && (minutesOfDay(shiftInfo[0].endTime) >= minutesOfDay(startTimeDate))
+                            && (minutesOfDay(startTimeDate) >= minutesOfDay(shiftInfo[0].startTime))
+                            && (minutesOfDay(shiftInfo[0].endTime)) >= minutesOfDay(endTimeDate)
+                            && (minutesOfDay(endTimeDate) >= minutesOfDay(shiftInfo[0].startTime))
+                        ) {
+                            markBreakTime(shiftInfo[0]._id)
+                            console.log('infirst shift');
+                        } else if (shiftInfo[1] && (minutesOfDay(shiftInfo[1].endTime) >= minutesOfDay(startTimeDate))
+                            && (minutesOfDay(startTimeDate) >= minutesOfDay(shiftInfo[1].startTime))
+                            && (minutesOfDay(shiftInfo[1].endTime)) >= minutesOfDay(endTimeDate)
+                            && (minutesOfDay(endTimeDate) >= minutesOfDay(shiftInfo[1].startTime))) {
+                            markBreakTime(shiftInfo[1]._id)
+                            console.log('in second shift')
+                        } else {
+                            res.json({status: false, message: 'Break Time is Not between shift'})
+                        }
+                        //res.send(shiftInfo);
+                    // } else {
+                    //     res.json({status: false, message: 'Break Time is Not between shift2'})
+                    // }
+                } else {
+                    res.json({status: false, message: 'No Shift Found with this staff'})
+                }
+
+            }).catch((err)=>{
+            res.send(err)
+        });
+
+        function minutesOfDay(m){
+            //console.log(m);
+            return new Date(m).getMinutes() + new Date(m).getHours() * 60;
+        }
+        function markBreakTime(shiftDetailId) {
+            //        ,
+            //         status: {$in:[1,3,4]}
+            Attendance.findOneAndUpdate({
+                userId: mongoose.Types.ObjectId(req.body.userId),
+                shiftDetailId: mongoose.Types.ObjectId(shiftDetailId)
+            }, {
+                $push: {
+                    "breakTime": {startTime: new Date(startTimeDate), endTime: endTimeDate, duration: min},
+                },
+                $inc: {totalBreakDuration: min}
+            }, {new: true}).then((result) => {
+                console.log('result', result);
+                if (result)
+                    return res.json({status: 1, data: result, message: "Break Time Updated successfully"});
+                else
+                    return res.json({status: 2, data: null, message: "No Clock in attendance found for this shift"});
+            }).catch((err) => {
+                return res.json({status: 3, data: null, message: "something went wrong"});
+            });
+        }
+
+    }
+}
+attendanceController = new attendanceController();
+module.exports = attendanceController;

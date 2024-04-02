@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: internal-api
+  labels:
+    app: internal-api
+spec:
+  selector:
+    matchLabels:
+      app: internal-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: internal-api
+    spec:
+      containers:
+        - image: 026862454712.dkr.ecr.ap-southeast-1.amazonaws.com/netroc-backend:latest
+          name: internal-api
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3002
+              name: internal-api
+          env:
+            - name: host
+              value: "clamav-service" # Service name of ClamAV
+            - name: port
+              value: "3310" 

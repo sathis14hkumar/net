@@ -1,0 +1,4 @@
+Thu, 07 Mar 2024 12:42:19 GMT | INFO | backend.log | myNotifications has called | data:"5a98fb9536ab4f444b427176" | 
+Thu, 07 Mar 2024 12:42:19 GMT | INFO | backend.log | userNotifications has called | data:{"userId":"5a98fb9536ab4f444b427176"} | 
+Thu, 07 Mar 2024 12:42:19 GMT | INFO | backend.log | myNotifications has called | data:"5a98fb9536ab4f444b427176" | 
+Thu, 07 Mar 2024 12:42:19 GMT | INFO | backend.log | userNotifications has called | data:{"userId":"5a98fb9536ab4f444b427176"} | 

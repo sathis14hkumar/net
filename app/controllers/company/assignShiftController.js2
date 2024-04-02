@@ -1,0 +1,2460 @@
+// Controller Code Starts here
+const Shift = require('../../models/shift'),
+    ShiftDetails = require('../../models/shiftDetails'),
+    ShiftLog = require('../../models/shiftLog'),
+    StaffLimit = require('../../models/staffLimit'),
+    AppliedStaff = require('../../models/appliedStaff'),
+    Appointment = require('../../models/appointment'),
+    AssignShiftLog = require('../../models/assignShiftLog'),
+    Attendance = require('../../models/attendance'),
+    SubSection = require('../../models/subSection'),
+    User = require('../../models/user'),
+    ReportingLocation = require('../../models/reportingLocation'),
+    Role = require('../../models/role'),
+    __ = require('../../../helpers/globalFunctions');
+const OpsGroup = require('../../models/ops');
+const AssignShift = require('../../models/assignShift');
+const _ = require('lodash');
+const FCM = require('../../../helpers/fcm');
+var multiparty = require('multiparty');
+const async = require('async');
+const moment = require('moment');
+
+const csv = require('csvtojson');
+
+class assignShift {
+    async create(req, res) {
+        const bodyData = await this.getBodyData(req);
+        //return res.json(bodyData)
+        console.log('here');
+        if (bodyData) {
+            //const shiftId = await this.createShift(bodyData.shift);
+            const csvLength = bodyData.shiftDetails.length;
+            bodyData.shift.weekRangeStartsAt = moment(bodyData.shift.weekRangeStartsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+            bodyData.shift.weekRangeEndsAt = moment(bodyData.shift.weekRangeEndsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+            const timeFormat = bodyData.shift.timeFormat;
+            delete bodyData.shift.timeFormat;
+            const failedShift = [];
+            const createdShift = [];
+            const reportLocation = [];
+            bodyData.shift.plannedBy = req.user._id;
+
+            const planBussinessUnitId = await User.findOne({ _id: req.user._id }, { _id: 0, planBussinessUnitId: 1 });
+            //  const planBussinessUnitIdArr = planBussinessUnitId.planBussinessUnitId;
+            const planBussinessUnitIdArr = [];
+            planBussinessUnitId.planBussinessUnitId.map((planBu) => {
+                planBussinessUnitIdArr.push(planBu.toString())
+            });
+            console.log('eee', req.user._id);
+            req.body.data = {}
+            req.body.data = bodyData.shift;
+            const selectedBuID = bodyData.shift.businessUnitId
+            //console.log('bodyData.shift', bodyData.shift)
+            // for(let i =0; i< csvLength; i++ ){
+            //     bodyData.shiftDetails[i]= {...bodyData.shift, ...bodyData.shiftDetails[i]}
+            // }
+            let asyncIndex = 0;
+            //console.log('b');
+            await async.eachSeries(
+                bodyData.shiftDetails, (item, next) => {
+                    console.log('a', asyncIndex);
+                    bodyData.shiftDetails[asyncIndex] = { ...bodyData.shift, ...item };
+                    item.startTime = this.getDateInUTCFormat(item.StartDate, item.StartTime, timeFormat);
+                    item.endTime = this.getDateInUTCFormat(item.EndDate, item.EndTime, timeFormat);
+                    // asyncIndex++;
+                    // next();
+                    // console.log('reportLocation',reportLocation);
+                    // console.log('failedShift', failedShift)
+                    // checked here user belongs to plan BU by changing where cause
+                    // as well get scheme of user to check user has assing shift scheme
+                    User.findOne({ staffId: item.staffId }, { _id: 1, appointmentId: 1, role: 1, subSkillSets: 1, schemeId: 1, parentBussinessUnitId: 1, name: 1 })
+                        .populate([{
+                            path: "schemeId",
+                            "select": "shiftSchemeType shiftSetup"
+                        }])
+                        .then((userInfo) => {
+                            //console.log('gg')
+                            if (userInfo) {
+                                // return res.json({userInfo, planBussinessUnitIdArr})
+                                if (planBussinessUnitIdArr.includes(userInfo.parentBussinessUnitId.toString())) {
+                                    // return res.json({userInfo, planBussinessUnitIdArr, a:"1"})
+                                    if (userInfo.schemeId && (userInfo.schemeId.shiftSchemeType == 2 || userInfo.schemeId.shiftSchemeType == 3)) {
+                                        //    return res.json({userInfo, planBussinessUnitIdArr})
+                                        //console.log(userInfo);
+                                        bodyData.shiftDetails[asyncIndex].staff_id = userInfo._id;
+                                        bodyData.shiftDetails[asyncIndex].name = userInfo.name;
+                                        bodyData.shiftDetails[asyncIndex].shiftScheme = userInfo.schemeId
+                                        bodyData.shiftDetails[asyncIndex].staffAppointmentId = userInfo.appointmentId;
+                                        bodyData.shiftDetails[asyncIndex].staffRoleId = userInfo.role;
+                                        bodyData.shiftDetails[asyncIndex].subSkillSets = userInfo.subSkillSets;
+                                        bodyData.shiftDetails[asyncIndex].confirmedStaffs = [];
+                                        bodyData.shiftDetails[asyncIndex].confirmedStaffs[0] = userInfo._id;
+                                        console.log('item.StartTime', item.StartTime);
+                                        const startTimeArrSplit = item.StartTime.split(':');
+                                        if (startTimeArrSplit.length <= 2) {
+                                            item.StartTime = item.StartTime + ':00'
+                                        }
+                                        console.log('item.StartTime after', item.StartTime);
+                                        const endTimeArrSplit = item.EndTime.split(':');
+                                        if (endTimeArrSplit.length <= 2) {
+                                            item.EndTime = item.EndTime + ':00'
+                                        }
+                                        bodyData.shiftDetails[asyncIndex].startTime = this.getDateInUTCFormat(item.StartDate, item.StartTime, timeFormat);
+                                        bodyData.shiftDetails[asyncIndex].endTime = this.getDateInUTCFormat(item.EndDate, item.EndTime, timeFormat);
+                                        bodyData.shiftDetails[asyncIndex].startTimeInSeconds = moment(new Date(bodyData.shiftDetails[asyncIndex].startTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();// new Date(bodyData.shiftDetails[asyncIndex].startTime).getTime();
+                                        bodyData.shiftDetails[asyncIndex].endTimeInSeconds = moment(new Date(bodyData.shiftDetails[asyncIndex].endTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();//new Date(bodyData.shiftDetails[asyncIndex].endTime).getTime();
+                                        let dateSplit = item.Date.split('-');
+                                        item.Date = dateSplit[1] + '-' + dateSplit[0] + '-' + dateSplit[2];
+                                        bodyData.shiftDetails[asyncIndex].day = dateSplit[2] + '-' + dateSplit[1] + '-' + dateSplit[0];
+                                        bodyData.shiftDetails[asyncIndex].date = moment(item.Date, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+                                        bodyData.shiftDetails[asyncIndex].weekNumber = __.weekNoStartWithMonday(bodyData.shift.weekRangeStartsAt)//moment(bodyData.shiftDetails[asyncIndex].date).format('ww');
+                                        var startSecond = new Date(bodyData.shiftDetails[asyncIndex].startTime).getTime();
+                                        var endSecond = new Date(bodyData.shiftDetails[asyncIndex].endTime).getTime()
+                                        bodyData.shiftDetails[asyncIndex].duration = (endSecond - startSecond) / (3600000);
+                                        //bodyData.shiftDetails[asyncIndex].confirmedStaffs = userInfo._id;
+                                        //await ReportingLocation.findOne({name: `/${item.reportLocationName}/i`}).lean();
+                                        //console.log('/item.reportLocationName/i','/'+item.reportLocationName+'/i');
+                                        const locationFind = reportLocation.find((locationItem) => {
+                                            return locationItem.name.toLowerCase() === item.reportLocationName.toLowerCase();
+                                        });
+                                        if (locationFind) {
+                                            bodyData.shiftDetails[asyncIndex].reportLocationId = locationFind._id;
+                                            asyncIndex++;
+                                            if (asyncIndex === csvLength) {
+                                                this.sendResponse(bodyData.shiftDetails, res, failedShift, req)
+                                            }
+                                            next();
+                                        } else {
+                                            ReportingLocation.findOne({
+                                                name: { $regex: new RegExp(`^${item.reportLocationName}$`, 'i') },
+                                                status: 1
+                                            }, { name: 1, _id: 1 }).then((location) => {
+                                                if (location) {
+                                                    //  console.log('locationfound');
+                                                    reportLocation.push(location);
+                                                    bodyData.shiftDetails[asyncIndex].reportLocationId = location._id;
+                                                    asyncIndex++;
+                                                    if (asyncIndex === csvLength) {
+                                                        this.sendResponse(bodyData.shiftDetails, res, failedShift, req)
+                                                    }
+                                                    next();
+                                                } else {
+                                                    //  console.log('locationfoundnot');
+                                                    const createLocation = {
+                                                        name: item.reportLocationName,
+                                                        companyId: req.user.companyId,
+                                                        status: 1
+                                                    };
+                                                    new ReportingLocation(createLocation).save().then((locationCreate) => {
+                                                        console.log('locationfoundinsert', locationCreate);
+                                                        this.updateBu(locationCreate._id, selectedBuID)
+                                                        reportLocation.push(locationCreate);
+                                                        bodyData.shiftDetails[asyncIndex].reportLocationId = locationCreate._id;
+                                                        asyncIndex++;
+                                                        if (asyncIndex === csvLength) {
+                                                            this.sendResponse(bodyData.shiftDetails, res, failedShift, req)
+                                                        }
+                                                        next();
+                                                    }).catch((errlocation) => {
+                                                        console.log('errlocation', errlocation)
+                                                        item.faildMessage = 'Location create Error';
+                                                        item.status = 0;
+                                                        item.name = userInfo.name;
+                                                        failedShift.push(item);
+                                                        bodyData.shiftDetails[asyncIndex] = null;
+                                                        // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                                        asyncIndex++;
+                                                        if (asyncIndex === csvLength) {
+                                                            this.sendResponse(bodyData.shiftDetails, res, failedShift, req)
+                                                        }
+                                                        next();
+                                                    });
+
+                                                }
+                                            }).catch((er) => {
+                                                console.log('er', er);
+                                                // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                                bodyData.shiftDetails[asyncIndex] = null;
+                                                asyncIndex++;
+                                                item.faildMessage = 'Location Error';
+                                                item.status = 0;
+                                                item.name = userInfo.name;
+                                                failedShift.push(item);
+                                                if (asyncIndex === csvLength) {
+                                                    this.sendResponse(bodyData.shiftDetails, res, failedShift, req)
+                                                }
+                                                next();
+                                            });
+                                        }
+
+                                    } else {
+                                        item.faildMessage = 'User Does not have valid scheme'//'User Not Belong to Plan Business Unit';
+                                        item.status = 0;
+                                        item.name = userInfo.name;
+                                        failedShift.push(item);
+                                        // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                        bodyData.shiftDetails[asyncIndex] = null;
+                                        asyncIndex++;
+                                        if (asyncIndex === csvLength) {
+                                            this.sendResponse(bodyData.shiftDetails, res, failedShift, req);
+                                        }
+                                        next();
+                                    }
+                                } else {
+                                    // plan BU not
+                                    item.faildMessage = 'User Not Belong to Plan Business Unit'//'User Not Belong to Plan Business Unit';
+                                    item.status = 0;
+                                    item.name = userInfo.name;
+                                    failedShift.push(item);
+                                    // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                    bodyData.shiftDetails[asyncIndex] = null;
+                                    asyncIndex++;
+                                    if (asyncIndex === csvLength) {
+                                        this.sendResponse(bodyData.shiftDetails, res, failedShift, req);
+                                    }
+                                    next();
+                                }
+                            } else {
+                                console.log('usernot')
+                                item.faildMessage = 'Staff ID not Found'//'User Not Belong to Plan Business Unit';
+                                item.status = 0;
+                                failedShift.push(item);
+                                // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                bodyData.shiftDetails[asyncIndex] = null;
+                                asyncIndex++;
+                                if (asyncIndex === csvLength) {
+                                    this.sendResponse(bodyData.shiftDetails, res, failedShift, req);
+                                }
+                                next();
+                            }
+                        }).catch((err) => {
+                        console.log('err', err);
+                        item.faildMessage = 'Error';
+                        item.status = 0;
+                        failedShift.push(item);
+                        //bodyData.shiftDetails.splice(asyncIndex, 1);
+                        bodyData.shiftDetails[asyncIndex] = null;
+                        asyncIndex++;
+                        if (asyncIndex === csvLength) {
+                            this.sendResponse(bodyData.shiftDetails, res, failedShift, req)
+                        }
+                        next();
+                    });
+
+                });
+            //console.log('c');
+        }
+        else {
+            res.json({ status: false, code: 1, message: 'Something went wrong' });
+        }
+
+    }
+    updateBu(locationData, bu) {
+        console.log('updateBu', locationData, bu);
+        SubSection.update(
+            { _id: bu },
+            { $push: { reportingLocation: locationData } }).then((sub) => {
+            console.log('updateBuupdateBu', sub);
+            return true;
+        }).catch((e) => {
+            console.log('updateBu', e)
+            return true;
+        });
+    }
+    async createStaff(req, res) {
+        const bodyData = await this.getBodyDataStaff(req);
+        //  return res.json({bodyData})
+        console.log('here');
+        const isMobile = req.body.shift.isMobile;
+        //console.log('req.body', req.body);
+
+        //  const bodyData = [];
+        const planBussinessUnitId = await User.findOne({ _id: req.user._id }, { _id: 0, planBussinessUnitId: 1 });
+        //  const planBussinessUnitIdArr = planBussinessUnitId.planBussinessUnitId;
+        const planBussinessUnitIdArr = [];
+        planBussinessUnitId.planBussinessUnitId.map((planBu) => {
+            planBussinessUnitIdArr.push(planBu.toString())
+        });
+        //return res.json({s:'a'})
+        if (bodyData) {
+            //const shiftId = await this.createShift(bodyData.shift);
+            const csvLength = bodyData.shiftDetails.length;
+            bodyData.shift.weekRangeStartsAt = moment(bodyData.shift.weekRangeStartsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+            bodyData.shift.weekRangeEndsAt = moment(bodyData.shift.weekRangeEndsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+            const timeFormat = bodyData.shift.timeFormat;
+            delete bodyData.shift.timeFormat;
+            const failedShift = [];
+            const createdShift = [];
+            const reportLocation = [];
+            bodyData.shift.plannedBy = req.user._id;
+            req.body.data = {}
+            req.body.data = bodyData.shift;
+            //console.log('bodyData.shift', bodyData.shift)
+            // for(let i =0; i< csvLength; i++ ){
+            //     bodyData.shiftDetails[i]= {...bodyData.shift, ...bodyData.shiftDetails[i]}
+            // }
+            let asyncIndex = 0;
+            //console.log('b');
+            await async.eachSeries(
+                bodyData.shiftDetails, (item, next) => {
+                    console.log('a', asyncIndex);
+                    bodyData.shiftDetails[asyncIndex] = { ...bodyData.shift, ...item };
+                    item.startTime = this.getDateInUTCFormat(item.StartDate, item.StartTime, timeFormat);
+                    item.endTime = this.getDateInUTCFormat(item.EndDate, item.EndTime, timeFormat);
+                    // if(item.isSplitShift){
+                    //     item.splitstartTime = this.getDateInUTCFormat(item.StartDate, item.splitStartTime, timeFormat);
+                    //     item.splitendTime = this.getDateInUTCFormat(item.EndDate, item.splitEndTime, timeFormat);
+                    // }
+                    // asyncIndex++;
+                    // next();
+                    // console.log('reportLocation',reportLocation);
+                    // console.log('failedShift', failedShift)
+                    User.findOne({ staffId: item.staffId }, { _id: 1, appointmentId: 1, role: 1, subSkillSets: 1, parentBussinessUnitId: 1, schemeId: 1, name: 1 }).populate([{
+                        path: "schemeId",
+                        "select": "shiftSchemeType shiftSetup"
+                    }]).then((userInfo) => {
+                        //console.log('gg')
+                        if (userInfo) {
+                            //console.log(userInfo);
+                            if (userInfo.schemeId && (userInfo.schemeId.shiftSchemeType == 2 || userInfo.schemeId.shiftSchemeType == 3)) {
+                                bodyData.shiftDetails[asyncIndex].shiftScheme = userInfo.schemeId;
+                                bodyData.shiftDetails[asyncIndex].staff_id = userInfo._id;
+                                bodyData.shiftDetails[asyncIndex].name = userInfo.name;
+                                bodyData.shiftDetails[asyncIndex].staffAppointmentId = userInfo.appointmentId;
+                                bodyData.shiftDetails[asyncIndex].staffRoleId = userInfo.role;
+                                bodyData.shiftDetails[asyncIndex].subSkillSets = item.subSkillSets;
+                                bodyData.shiftDetails[asyncIndex].confirmedStaffs = [];
+                                bodyData.shiftDetails[asyncIndex].confirmedStaffs[0] = userInfo._id;
+                                bodyData.shiftDetails[asyncIndex].startTime = this.getDateInUTCFormat(item.StartDate, item.StartTime, timeFormat);
+                                bodyData.shiftDetails[asyncIndex].endTime = this.getDateInUTCFormat(item.EndDate, item.EndTime, timeFormat);
+                                // console.log('bodyData.shiftDetails[asyncIndex].endTime', bodyData.shiftDetails[asyncIndex].endTime, moment(new Date(bodyData.shiftDetails[asyncIndex].endTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix());
+                                bodyData.shiftDetails[asyncIndex].startTimeInSeconds = moment(new Date(bodyData.shiftDetails[asyncIndex].startTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();// new Date(bodyData.shiftDetails[asyncIndex].startTime).getTime();
+                                bodyData.shiftDetails[asyncIndex].endTimeInSeconds = moment(new Date(bodyData.shiftDetails[asyncIndex].endTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();//new Date(bodyData.shiftDetails[asyncIndex].endTime).getTime();
+                                var startSecond = new Date(bodyData.shiftDetails[asyncIndex].startTime).getTime();
+                                var endSecond = new Date(bodyData.shiftDetails[asyncIndex].endTime).getTime()
+                                bodyData.shiftDetails[asyncIndex].duration = (endSecond - startSecond) / (3600000);
+                                if(item.isSplitShift){
+                                    console.log('item.splitEndTime',item.splitEndTime);
+                                    bodyData.shiftDetails[asyncIndex].splitStartTime = this.getDateInUTCFormat(item.StartDate, item.splitStartTime, timeFormat);
+                                    bodyData.shiftDetails[asyncIndex].splitEndTime = this.getDateInUTCFormat(item.EndDate, item.splitEndTime, timeFormat);
+                                    console.log('bodyData.shiftDetails[asyncIndex].splitStartTime', bodyData.shiftDetails[asyncIndex].splitStartTime);
+                                    console.log('enndd',bodyData.shiftDetails[asyncIndex].splitEndTime)
+                                    bodyData.shiftDetails[asyncIndex].splitStartTimeInSeconds = moment(new Date(bodyData.shiftDetails[asyncIndex].splitStartTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();// new Date(bodyData.shiftDetails[asyncIndex].startTime).getTime();
+                                    bodyData.shiftDetails[asyncIndex].splitEndTimeInSeconds = moment(new Date(bodyData.shiftDetails[asyncIndex].splitEndTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();//new Date(bodyData.shiftDetails[asyncIndex].endTime).getTime();
+                                    var startSecondSplit = new Date(bodyData.shiftDetails[asyncIndex].splitStartTime).getTime();
+                                    var endSecondSplit = new Date(bodyData.shiftDetails[asyncIndex].splitEndTime).getTime()
+                                    bodyData.shiftDetails[asyncIndex].duration += (endSecondSplit - startSecondSplit) / (3600000);
+                                }
+                                let dateSplit = item.Date.split('-');
+                                item.Date = dateSplit[1] + '-' + dateSplit[0] + '-' + dateSplit[2];
+                                bodyData.shiftDetails[asyncIndex].day = dateSplit[2] + '-' + dateSplit[1] + '-' + dateSplit[0];
+                                bodyData.shiftDetails[asyncIndex].date = moment(item.Date, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+                                bodyData.shiftDetails[asyncIndex].weekNumber = __.weekNoStartWithMonday(bodyData.shift.weekRangeStartsAt)//moment(bodyData.shiftDetails[asyncIndex].date).format('ww');
+
+                                //bodyData.shiftDetails[asyncIndex].confirmedStaffs = userInfo._id;
+                                //await ReportingLocation.findOne({name: `/${item.reportLocationName}/i`}).lean();
+                                //console.log('/item.reportLocationName/i','/'+item.reportLocationName+'/i');
+                                const locationFind = reportLocation.find((locationItem) => {
+                                    return locationItem.name.toLowerCase() === item.reportLocationName.toLowerCase();
+                                });
+                                if (locationFind) {
+                                    bodyData.shiftDetails[asyncIndex].reportLocationId = locationFind._id;
+                                    asyncIndex++;
+                                    if (asyncIndex === csvLength) {
+                                        this.sendResponse(bodyData.shiftDetails, res, failedShift, req, 0)
+                                    }
+                                    next();
+                                } else {
+                                    ReportingLocation.findOne({
+                                        name: { $regex: new RegExp(`^${item.reportLocationName}$`, 'i') },
+                                        status: 1
+                                    }, { name: 1, _id: 1 }).then((location) => {
+                                        if (location) {
+                                            //  console.log('locationfound');
+                                            reportLocation.push(location);
+                                            bodyData.shiftDetails[asyncIndex].reportLocationId = location._id;
+                                            asyncIndex++;
+                                            if (asyncIndex === csvLength) {
+                                                this.sendResponse(bodyData.shiftDetails, res, failedShift, req, 0)
+                                            }
+                                            next();
+                                        } else {
+                                            //  console.log('locationfoundnot');
+                                            const createLocation = {
+                                                name: item.reportLocationName,
+                                                companyId: '5a9d162b36ab4f444b4271c8',
+                                                status: 1
+                                            };
+                                            new ReportingLocation(createLocation).save().then((locationCreate) => {
+                                                console.log('locationfoundinsert');
+                                                reportLocation.push(locationCreate);
+                                                bodyData.shiftDetails[asyncIndex].reportLocationId = locationCreate._id;
+                                                asyncIndex++;
+                                                if (asyncIndex === csvLength) {
+                                                    this.sendResponse(bodyData.shiftDetails, res, failedShift, req, 0)
+                                                }
+                                                next();
+                                            }).catch((errlocation) => {
+                                                console.log('errlocation', errlocation)
+                                                item.faildMessage = 'Location create Error';
+                                                item.status = 0;
+                                                item.name = userInfo.name;
+                                                failedShift.push(item);
+                                                bodyData.shiftDetails[asyncIndex] = null;
+                                                // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                                asyncIndex++;
+                                                if (asyncIndex === csvLength) {
+                                                    this.sendResponse(bodyData.shiftDetails, res, failedShift, req, 0)
+                                                }
+                                                next();
+                                            });
+
+                                        }
+                                    }).catch((er) => {
+                                        console.log('er', er);
+                                        // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                        bodyData.shiftDetails[asyncIndex] = null;
+                                        asyncIndex++;
+                                        item.faildMessage = 'Location Error';
+                                        item.status = 0;
+                                        item.name = userInfo.name;
+                                        failedShift.push(item);
+                                        if (asyncIndex === csvLength) {
+                                            this.sendResponse(bodyData.shiftDetails, res, failedShift, req, 0)
+                                        }
+                                        next();
+                                    });
+                                }
+                            } else {
+                                item.faildMessage = 'User Does not have valid scheme'//'User Not Belong to Plan Business Unit';
+                                item.status = 0;
+                                item.name = userInfo.name;
+                                failedShift.push(item);
+                                // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                bodyData.shiftDetails[asyncIndex] = null;
+                                asyncIndex++;
+                                if (asyncIndex === csvLength) {
+                                    this.sendResponse(bodyData.shiftDetails, res, failedShift, req, 0);
+                                }
+                                next();
+                            }
+
+                        } else {
+                            console.log('usernot')
+                            item.faildMessage = 'UserNotfound';
+                            item.status = 0;
+                            failedShift.push(item);
+                            // bodyData.shiftDetails.splice(asyncIndex, 1);
+                            bodyData.shiftDetails[asyncIndex] = null;
+                            asyncIndex++;
+                            if (asyncIndex === csvLength) {
+                                this.sendResponse(bodyData.shiftDetails, res, failedShift, req, 0);
+                            }
+                            next();
+                        }
+                    }).catch((err) => {
+                        console.log('err', err);
+                        item.faildMessage = 'Error';
+                        item.status = 0;
+                        failedShift.push(item);
+                        //bodyData.shiftDetails.splice(asyncIndex, 1);
+                        bodyData.shiftDetails[asyncIndex] = null;
+                        asyncIndex++;
+                        if (asyncIndex === csvLength) {
+                            this.sendResponse(bodyData.shiftDetails, res, failedShift, req, 0)
+                        }
+                        next();
+                    });
+
+                });
+            //console.log('c');
+        }
+        else {
+            res.json({ status: false, code: 1, message: 'Something went wrong' });
+        }
+
+    }
+    async createStaffAsRestOrOff(req, res) {
+        const bodyData = await this.getBodyDataStaff(req);
+        //  return res.json({bodyData})
+        console.log('here');
+        //console.log('req.body', req.body);
+
+        //  const bodyData = [];
+        const planBussinessUnitId = await User.findOne({ _id: req.user._id }, { _id: 0, planBussinessUnitId: 1 });
+        //  const planBussinessUnitIdArr = planBussinessUnitId.planBussinessUnitId;
+        const planBussinessUnitIdArr = [];
+        planBussinessUnitId.planBussinessUnitId.map((planBu) => {
+            planBussinessUnitIdArr.push(planBu.toString())
+        });
+        //return res.json({s:'a'})
+        if (bodyData) {
+            //const shiftId = await this.createShift(bodyData.shift);
+            const csvLength = bodyData.shiftDetails.length;
+            bodyData.shift.weekRangeStartsAt = moment(bodyData.shift.weekRangeStartsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+            bodyData.shift.weekRangeEndsAt = moment(bodyData.shift.weekRangeEndsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+            const timeFormat = bodyData.shift.timeFormat;
+            delete bodyData.shift.timeFormat;
+            const failedShift = [];
+            const createdShift = [];
+            const reportLocation = [];
+            bodyData.shift.plannedBy = req.user._id;
+            req.body.data = {}
+            req.body.data = bodyData.shift;
+            //console.log('bodyData.shift', bodyData.shift)
+            // for(let i =0; i< csvLength; i++ ){
+            //     bodyData.shiftDetails[i]= {...bodyData.shift, ...bodyData.shiftDetails[i]}
+            // }
+            let asyncIndex = 0;
+            //console.log('b');
+            await async.eachSeries(
+                bodyData.shiftDetails, (item, next) => {
+                    console.log('a', asyncIndex);
+                    bodyData.shiftDetails[asyncIndex] = { ...bodyData.shift, ...item };
+                    // as start
+                    //   item.startTime = this.getDateInUTCFormat(item.StartDate, item.StartTime, timeFormat);
+                    //   item.endTime = this.getDateInUTCFormat(item.EndDate, item.EndTime, timeFormat);
+                    // as end
+                    // asyncIndex++;
+                    // next();
+                    // console.log('reportLocation',reportLocation);
+                    // console.log('failedShift', failedShift)
+                    User.findOne({ staffId: item.staffId }, { _id: 1, appointmentId: 1, role: 1, subSkillSets: 1, parentBussinessUnitId: 1, schemeId: 1, name: 1 }).populate([{
+                        path: "schemeId",
+                        "select": "shiftSchemeType shiftSetup"
+                    }]).then((userInfo) => {
+                        //console.log('gg')
+                        if (userInfo) {
+                            //console.log(userInfo);
+                            if (userInfo.schemeId && (userInfo.schemeId.shiftSchemeType == 2 || userInfo.schemeId.shiftSchemeType == 3)) {
+                                bodyData.shiftDetails[asyncIndex].shiftScheme = userInfo.schemeId;
+                                bodyData.shiftDetails[asyncIndex].staff_id = userInfo._id;
+                                bodyData.shiftDetails[asyncIndex].name = userInfo.name;
+                                bodyData.shiftDetails[asyncIndex].staffAppointmentId = userInfo.appointmentId;
+                                bodyData.shiftDetails[asyncIndex].staffRoleId = userInfo.role;
+                                bodyData.shiftDetails[asyncIndex].subSkillSets = userInfo.subSkillSets;
+                                bodyData.shiftDetails[asyncIndex].confirmedStaffs = [];
+                                bodyData.shiftDetails[asyncIndex].confirmedStaffs[0] = userInfo._id;
+                                bodyData.shiftDetails[asyncIndex].startTime = null;//this.getDateInUTCFormat(item.StartDate, item.StartTime, timeFormat);
+                                bodyData.shiftDetails[asyncIndex].endTime = null; //this.getDateInUTCFormat(item.EndDate, item.EndTime, timeFormat);
+                                // console.log('bodyData.shiftDetails[asyncIndex].endTime', bodyData.shiftDetails[asyncIndex].endTime, moment(new Date(bodyData.shiftDetails[asyncIndex].endTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix());
+                                bodyData.shiftDetails[asyncIndex].startTimeInSeconds = null;//moment(new Date(bodyData.shiftDetails[asyncIndex].startTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();// new Date(bodyData.shiftDetails[asyncIndex].startTime).getTime();
+                                bodyData.shiftDetails[asyncIndex].endTimeInSeconds = null;//moment(new Date(bodyData.shiftDetails[asyncIndex].endTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();//new Date(bodyData.shiftDetails[asyncIndex].endTime).getTime();
+                                let dateSplit = item.Date.split('-');
+                                item.Date = dateSplit[1] + '-' + dateSplit[0] + '-' + dateSplit[2];
+                                bodyData.shiftDetails[asyncIndex].day = dateSplit[2] + '-' + dateSplit[1] + '-' + dateSplit[0];
+                                bodyData.shiftDetails[asyncIndex].date = moment(item.Date, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+                                bodyData.shiftDetails[asyncIndex].weekNumber = __.weekNoStartWithMonday(bodyData.shift.weekRangeStartsAt)//moment(bodyData.shiftDetails[asyncIndex].date).format('ww');
+                                // as start
+                                //   var startSecond = new Date(bodyData.shiftDetails[asyncIndex].startTime).getTime();
+                                //   var endSecond = new Date(bodyData.shiftDetails[asyncIndex].endTime).getTime()
+                                // as end
+
+                                bodyData.shiftDetails[asyncIndex].duration = 0;
+                                //bodyData.shiftDetails[asyncIndex].confirmedStaffs = userInfo._id;
+                                //await ReportingLocation.findOne({name: `/${item.reportLocationName}/i`}).lean();
+                                //console.log('/item.reportLocationName/i','/'+item.reportLocationName+'/i');
+                                const locationFind = reportLocation.find((locationItem) => {
+                                    return locationItem.name.toLowerCase() === item.reportLocationName.toLowerCase();
+                                });
+                                if (locationFind) {
+                                    bodyData.shiftDetails[asyncIndex].reportLocationId = locationFind._id;
+                                    asyncIndex++;
+                                    if (asyncIndex === csvLength) {
+                                        this.sendResponseAsRestOrOff(bodyData.shiftDetails, res, failedShift, req, 0)
+                                    }
+                                    next();
+                                } else {
+                                    ReportingLocation.findOne({
+                                        name: { $regex: new RegExp(`^${item.reportLocationName}$`, 'i') },
+                                        status: 1
+                                    }, { name: 1, _id: 1 }).then((location) => {
+                                        if (location) {
+                                            //  console.log('locationfound');
+                                            reportLocation.push(location);
+                                            bodyData.shiftDetails[asyncIndex].reportLocationId = location._id;
+                                            asyncIndex++;
+                                            if (asyncIndex === csvLength) {
+                                                this.sendResponseAsRestOrOff(bodyData.shiftDetails, res, failedShift, req, 0)
+                                            }
+                                            next();
+                                        } else {
+                                            //  console.log('locationfoundnot');
+                                            const createLocation = {
+                                                name: item.reportLocationName,
+                                                companyId: '5a9d162b36ab4f444b4271c8',
+                                                status: 1
+                                            };
+                                            new ReportingLocation(createLocation).save().then((locationCreate) => {
+                                                console.log('locationfoundinsert');
+                                                reportLocation.push(locationCreate);
+                                                bodyData.shiftDetails[asyncIndex].reportLocationId = locationCreate._id;
+                                                asyncIndex++;
+                                                if (asyncIndex === csvLength) {
+                                                    this.sendResponseAsRestOrOff(bodyData.shiftDetails, res, failedShift, req, 0)
+                                                }
+                                                next();
+                                            }).catch((errlocation) => {
+                                                console.log('errlocation', errlocation)
+                                                item.faildMessage = 'Location create Error';
+                                                item.status = 0;
+                                                item.name = userInfo.name;
+                                                failedShift.push(item);
+                                                bodyData.shiftDetails[asyncIndex] = null;
+                                                // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                                asyncIndex++;
+                                                if (asyncIndex === csvLength) {
+                                                    this.sendResponseAsRestOrOff(bodyData.shiftDetails, res, failedShift, req, 0)
+                                                }
+                                                next();
+                                            });
+
+                                        }
+                                    }).catch((er) => {
+                                        console.log('er', er);
+                                        // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                        bodyData.shiftDetails[asyncIndex] = null;
+                                        asyncIndex++;
+                                        item.faildMessage = 'Location Error';
+                                        item.status = 0;
+                                        item.name = userInfo.name;
+                                        failedShift.push(item);
+                                        if (asyncIndex === csvLength) {
+                                            this.sendResponseAsRestOrOff(bodyData.shiftDetails, res, failedShift, req, 0)
+                                        }
+                                        next();
+                                    });
+                                }
+                            } else {
+                                item.faildMessage = 'User Does not have valid scheme'//'User Not Belong to Plan Business Unit';
+                                item.status = 0;
+                                item.name = userInfo.name;
+                                failedShift.push(item);
+                                // bodyData.shiftDetails.splice(asyncIndex, 1);
+                                bodyData.shiftDetails[asyncIndex] = null;
+                                asyncIndex++;
+                                if (asyncIndex === csvLength) {
+                                    this.sendResponseAsRestOrOff(bodyData.shiftDetails, res, failedShift, req, 0);
+                                }
+                                next();
+                            }
+
+                        } else {
+                            console.log('usernot')
+                            item.faildMessage = 'UserNotfound';
+                            item.status = 0;
+                            failedShift.push(item);
+                            // bodyData.shiftDetails.splice(asyncIndex, 1);
+                            bodyData.shiftDetails[asyncIndex] = null;
+                            asyncIndex++;
+                            if (asyncIndex === csvLength) {
+                                this.sendResponseAsRestOrOff(bodyData.shiftDetails, res, failedShift, req, 0);
+                            }
+                            next();
+                        }
+                    }).catch((err) => {
+                        console.log('err', err);
+                        item.faildMessage = 'Error';
+                        item.status = 0;
+                        failedShift.push(item);
+                        //bodyData.shiftDetails.splice(asyncIndex, 1);
+                        bodyData.shiftDetails[asyncIndex] = null;
+                        asyncIndex++;
+                        if (asyncIndex === csvLength) {
+                            this.sendResponseAsRestOrOff(bodyData.shiftDetails, res, failedShift, req, 0)
+                        }
+                        next();
+                    });
+
+                });
+            //console.log('c');
+        }
+        else {
+            res.json({ status: false, code: 1, message: 'Something went wrong' });
+        }
+
+    }
+    getDateInUTCFormat(date, time, timeZone) {
+        let dateSplit = date.split('-');
+        date = dateSplit[1] + '-' + dateSplit[0] + '-' + dateSplit[2];
+        const dateTime = `${date} ${time} ${timeZone}`;
+        console.log('datetime', dateTime);
+        return moment(dateTime, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+    }
+    async sendResponse(bodyData, res, failedShift, req, from = 1) {
+        //return res.json(bodyData)
+        // console.log('###########', bodyData);
+        let isFailed = false;
+        let isLimitExceed = false;
+        let isAlert = false;
+        let isMobile = req.body.shift.isMobile;
+        const assignShiftIdArr = [];
+        try {
+            const totalShift = bodyData.length;
+            let i = 0;
+            const validShift = [];
+            async.eachSeries(
+                bodyData, (item, next) => {
+                    i++;
+                    isLimitExceed = false;
+                    isAlert = false;
+                    if (item) {  // ignore failed shift
+                        console.log('item.weekRangeStartsAt', item.weekRangeStartsAt);
+                        console.log(item.date);
+                        item.isLimit = false;
+                        item.isAlert = false;
+                        console.log(item.weekRangeEndsAt)
+                        console.log('#######', __.weekNoStartWithMonday(item.date), __.weekNoStartWithMonday(item.weekRangeStartsAt), __.weekNoStartWithMonday(item.weekRangeEndsAt))
+                        const weekStart = __.weekNoStartWithMonday(item.weekRangeStartsAt);
+                        const weekDate = __.weekNoStartWithMonday(item.date);
+                        const weekEnd = __.weekNoStartWithMonday(item.weekRangeEndsAt)
+                        if ((weekStart == weekDate || weekDate == weekEnd) || new Date(item.weekRangeStartsAt).getTime() <= new Date(item.date).getTime() && new Date(item.weekRangeEndsAt).getTime() >= new Date(item.date).getTime()) {
+                            console.log('hereeee')
+                            AssignShift.find({ staffId: item.staffId, date: item.date }).then(async(shiftResult) => {
+                                //console.log('shiftResult', shiftResult.length)
+                                if (shiftResult && shiftResult.length > 0) {
+                                    const shiftAlreadyPresent = shiftResult.filter((shiftAl) => {
+                                        return new Date(shiftAl.startTime).getTime() === new Date(item.startTime).getTime() &&
+                                            new Date(shiftAl.endTime).getTime() === new Date(item.endTime).getTime()
+                                    });
+                                    //console.log('filter');
+                                    if (shiftAlreadyPresent && shiftAlreadyPresent.length > 0) {
+                                        item.faildMessage = 'Shift Already Present';
+                                        item.status = 0;
+                                        failedShift.push(item);
+                                    }
+                                    let shiftOverlapping = [];
+                                    if (shiftAlreadyPresent.length === 0) {
+                                        shiftOverlapping = shiftResult.filter((shiftOverl) => {
+                                            return (new Date(shiftOverl.startTime).getTime() <= new Date(item.startTime).getTime() &&
+                                                new Date(shiftOverl.endTime).getTime() >= new Date(item.startTime).getTime()
+                                            ) || (new Date(shiftOverl.startTime).getTime() <= new Date(item.endTime).getTime() &&
+                                                new Date(shiftOverl.endTime).getTime() >= new Date(item.endTime).getTime()
+                                            )
+                                        });
+                                        // console.log('overlap');
+                                        if (shiftOverlapping && shiftOverlapping.length > 0) {
+                                            item.faildMessage = 'Shift is Overlapping';
+                                            item.status = 0;
+                                            failedShift.push(item);
+                                        }
+                                    }
+                                    console.log('shiftOverlapping.length', shiftOverlapping.length, shiftAlreadyPresent.length)
+                                    if (shiftOverlapping.length === 0 && shiftAlreadyPresent.length === 0) {
+                                        const isLimit = await this.checkLimit(item);
+                                        console.log('isLimit', isLimit);
+                                        let isSave = true;
+                                        if (isLimit.limit) {
+                                            isLimitExceed = true;
+                                            item.isAllowPublish = false;
+                                            item.alertMessage = isLimit.message;
+                                            item.isLimit = true;
+                                            item.schemeDetails = isLimit.details;
+                                            item.isAlert = false
+                                            if (isLimit.status) {
+                                                isSave = true;
+                                                item.isAlert = true
+                                            }
+                                            // }else{
+                                            //     isAlert = true;
+                                            //     item.alertMessage = "Staff timing limit is crossing for a "+isLimit.flag;
+                                            //     item.isLimit = true;
+                                            //     item.schemeDetails = isLimit.details;
+                                            // }
+                                        }
+                                        console.log('áfteetetetet',item.splitEndTime)
+                                        if (isSave) {
+                                            delete item.shiftScheme;
+                                            item.isMobile = isMobile;
+                                            new AssignShift(item).save().then((saveShift) => {
+                                                isLimit.staffLimitData.assignShiftId = saveShift._id;
+                                                new StaffLimit(isLimit.staffLimitData).save();
+                                                console.log('staffLimitData', isLimit.staffLimitData)
+                                                assignShiftIdArr.push(saveShift._id)
+                                                validShift.push(item)
+                                                console.log('aaaaaaaaa', i, totalShift)
+                                                if (i === totalShift) {
+                                                    this.failedShiftInsert(failedShift, req, validShift, 0);
+                                                    if (failedShift.length > 0 && !from) {
+                                                        isFailed = true;
+                                                    }
+                                                    // publishshift assignShiftIdArr
+                                                    if(isMobile){
+                                                        this.publishAllFromMobile(assignShiftIdArr);
+                                                    }
+                                                    res.json({
+                                                        isAlert,
+                                                        isLimitExceed,
+                                                        isFailed,
+                                                        status: true,
+                                                        code: 1,
+                                                        message: 'shift draft created successfully'
+                                                    });
+                                                }
+                                                next();
+                                            });
+                                        } else {
+                                            // limit don't save
+                                            item.faildMessage = "Staff timing limit is crossing for a " + isLimit.flag;
+                                            item.status = 0;
+                                            failedShift.push(item);
+                                            if (i === totalShift) {
+                                                this.failedShiftInsert(failedShift, req, validShift, 0);
+                                                if (failedShift.length > 0 && !from) {
+                                                    isFailed = true;
+                                                }
+                                                // publishshift assignShiftIdArr
+                                                if(isMobile){
+                                                    this.publishAllFromMobile(assignShiftIdArr);
+                                                }
+                                                res.json({
+                                                    isAlert,
+                                                    isLimitExceed,
+                                                    isFailed,
+                                                    status: true,
+                                                    code: 1,
+                                                    message: 'shift draft created successfully'
+                                                });
+                                            }
+                                        }
+
+                                    } else {
+                                        if (i === totalShift) {
+                                            console.log('hereeeee', validShift.length);
+                                            this.failedShiftInsert(failedShift, req, validShift, 0);
+                                            if (failedShift.length > 0 && !from) {
+                                                isFailed = true;
+                                            }
+                                            // publishshift assignShiftIdArr
+                                            if(isMobile){
+                                                this.publishAllFromMobile(assignShiftIdArr);
+                                            }
+                                            res.json({ isAlert, isLimitExceed, isFailed, status: true, code: 1, message: 'shift draft created successfully' });
+                                        }
+                                        next();
+                                    }
+                                } else {
+                                    const isLimit = await this.checkLimit(item);
+                                    console.log('else limit', isLimit);
+                                    let isSave = true;
+                                    if (isLimit.limit) {
+                                        isLimitExceed = true;
+                                        item.isAllowPublish = false;
+                                        item.alertMessage = isLimit.message;
+                                        item.isLimit = true;
+                                        item.schemeDetails = isLimit.details;
+                                        item.isAlert = false
+                                        if (isLimit.status) {
+                                            isSave = true;
+                                            item.isAlert = true
+                                        }
+                                        // if(!isLimit.status){
+                                        //     isSave = false;
+                                        // }else{
+                                        //     isAlert = true;
+                                        //     item.alertMessage = "Staff timing limit is crossing for a "+isLimit.flag;
+                                        //     item.isLimit = true;
+                                        //     item.schemeDetails = isLimit.details;
+                                        // }
+                                    }
+                                    if (isSave) {
+                                        console.log('áfteetetetessssssssssst',item.splitStartTime,item.splitEndTime)
+                                        delete item.shiftScheme;
+                                        new AssignShift(item).save().then((saveShift) => {
+                                            isLimit.staffLimitData.assignShiftId = saveShift._id;
+                                            assignShiftIdArr.push(saveShift._id)
+                                            new StaffLimit(isLimit.staffLimitData).save();
+                                            console.log('staffLimitData', isLimit.staffLimitData)
+                                            item.status = 1;
+                                            console.log('bbbbbbb', i, totalShift)
+                                            validShift.push(item);
+                                            if (i === totalShift) {
+                                                this.failedShiftInsert(failedShift, req, validShift, 0);
+                                                if (failedShift.length > 0 && !from) {
+                                                    isFailed = true;
+                                                }
+                                                // publishshift assignShiftIdArr
+                                                if(isMobile){
+                                                    this.publishAllFromMobile(assignShiftIdArr);
+                                                }
+                                                res.json({ isAlert, isFailed, isLimitExceed, status: true, code: 1, message: 'shift draft created successfully' });
+                                                //res.json({status: false, code: 1, message:'Something went wrong'});
+                                                // res.json({validShift, failedShift});
+                                            }
+                                            next();
+                                        });
+                                    } else {
+                                        // limit don't save
+                                        item.faildMessage = "Staff timing limit is crossing for a " + isLimit.flag;
+                                        item.status = 0;
+                                        failedShift.push(item);
+                                        if (i === totalShift) {
+                                            this.failedShiftInsert(failedShift, req, validShift, 0);
+                                            if (failedShift.length > 0 && !from) {
+                                                isFailed = true;
+                                            }
+                                            // publishshift assignShiftIdArr
+                                            if(isMobile){
+                                                this.publishAllFromMobile(assignShiftIdArr);
+                                            }
+                                            res.json({
+                                                isAlert,
+                                                isFailed,
+                                                isLimitExceed,
+                                                status: true,
+                                                code: 1,
+                                                message: 'shift draft created successfully'
+                                            });
+                                        }
+                                    }
+                                }
+                            }).catch(async (err) => {
+                                console.log(err);
+                                if (i === totalShift) {
+
+                                    this.failedShiftInsert(failedShift, req, validShift, 0);
+                                    if (failedShift.length > 0 && !from) {
+                                        isFailed = true;
+                                    }
+                                    // publishshift assignShiftIdArr
+                                    if(isMobile){
+                                        this.publishAllFromMobile(assignShiftIdArr);
+                                    }
+                                    res.json({ isAlert, isFailed, isLimitExceed, status: true, code: 1, message: 'shift draft created successfully' });
+                                }
+                                next();
+                            });
+                        } else {
+                            item.faildMessage = 'Shift is not between the week';
+                            item.status = 0;
+                            failedShift.push(item);
+                            if (i === totalShift) {
+                                if (failedShift.length > 0 && !from) {
+                                    isFailed = true;
+                                }
+                                this.failedShiftInsert(failedShift, req, validShift, 0);
+                                // publishshift assignShiftIdArr
+                                if(isMobile){
+                                    this.publishAllFromMobile(assignShiftIdArr);
+                                }
+                                res.json({ isAlert, isFailed, isLimitExceed, status: true, code: 1, message: 'shift draft created successfully' });
+                                //res.json({validShift, failedShift});
+                            }
+                            next();
+                        }
+                    } else {
+                        if (i === totalShift) {
+                            this.failedShiftInsert(failedShift, req, validShift, 0);
+                            if (failedShift.length > 0 && !from) {
+                                isFailed = true;
+                            }
+                            // publishshift assignShiftIdArr
+                            if(isMobile){
+                                this.publishAllFromMobile(assignShiftIdArr);
+                            }
+                            res.json({ isAlert, isFailed, isLimitExceed, status: true, code: 1, message: 'shift draft created successfully' });
+                            //res.json({validShift, failedShift});
+                        }
+                        next();
+                        console.log('nul')
+                    }
+                });
+        } catch (e) {
+            console.log(e)
+        }
+    }
+    async sendResponseAsRestOrOff(bodyData, res, failedShift, req, from = 1) {
+        //return res.json(bodyData)
+        // console.log('###########', bodyData);
+        let isFailed = false;
+        let isLimitExceed = false;
+        let isAlert = false;
+        try {
+            const totalShift = bodyData.length;
+            let i = 0;
+            const validShift = [];
+            async.eachSeries(
+                bodyData, (item, next) => {
+                    i++;
+                    isLimitExceed = false;
+                    isAlert = false;
+                    if (item) {  // ignore failed shift
+                        console.log('item.weekRangeStartsAt', item.weekRangeStartsAt);
+                        console.log(item.date);
+                        item.isLimit = false;
+                        item.isAlert = false;
+                        console.log(item.weekRangeEndsAt)
+                        console.log('#######', __.weekNoStartWithMonday(item.date), __.weekNoStartWithMonday(item.weekRangeStartsAt), __.weekNoStartWithMonday(item.weekRangeEndsAt))
+                        const weekStart = __.weekNoStartWithMonday(item.weekRangeStartsAt);
+                        const weekDate = __.weekNoStartWithMonday(item.date);
+                        const weekEnd = __.weekNoStartWithMonday(item.weekRangeEndsAt)
+                        if ((weekStart == weekDate || weekDate == weekEnd) || new Date(item.weekRangeStartsAt).getTime() <= new Date(item.date).getTime() && new Date(item.weekRangeEndsAt).getTime() >= new Date(item.date).getTime()) {
+
+                            AssignShift.find({ staffId: item.staffId, date: item.date }).then(async (shiftResult) => {
+                                //console.log('shiftResult', shiftResult.length)
+                                if (shiftResult && shiftResult.length > 0) {
+                                    const shiftAlreadyPresent = shiftResult.filter((shiftAl) => {
+                                        return new Date(shiftAl.startTime).getTime() === new Date(item.startTime).getTime() &&
+                                            new Date(shiftAl.endTime).getTime() === new Date(item.endTime).getTime()
+                                    });
+                                    //console.log('filter');
+                                    if (shiftAlreadyPresent && shiftAlreadyPresent.length > 0) {
+                                        item.faildMessage = 'Shift Already Present';
+                                        item.status = 0;
+                                        failedShift.push(item);
+                                    }
+                                    let shiftOverlapping = [];
+                                    if (shiftAlreadyPresent.length === 0) {
+                                        shiftOverlapping = shiftResult.filter((shiftOverl) => {
+                                            return (new Date(shiftOverl.startTime).getTime() <= new Date(item.startTime).getTime() &&
+                                                new Date(shiftOverl.endTime).getTime() >= new Date(item.startTime).getTime()
+                                            ) || (new Date(shiftOverl.startTime).getTime() <= new Date(item.endTime).getTime() &&
+                                                new Date(shiftOverl.endTime).getTime() >= new Date(item.endTime).getTime()
+                                            )
+                                        });
+                                        // console.log('overlap');
+                                        if (shiftOverlapping && shiftOverlapping.length > 0) {
+                                            item.faildMessage = 'Shift is Overlapping';
+                                            item.status = 0;
+                                            failedShift.push(item);
+                                        }
+                                    }
+                                    if (shiftOverlapping.length === 0 && shiftAlreadyPresent.length === 0) {
+                                        //const isLimit = await this.checkLimit(item);
+                                        // console.log('isLimit', isLimit);
+                                        let isSave = true;
+                                        if (false) {
+                                            isLimitExceed = true;
+                                            item.isAllowPublish = false;
+                                            item.alertMessage = isLimit.message;
+                                            item.isLimit = true;
+                                            item.schemeDetails = isLimit.details;
+                                            item.isAlert = false
+                                            if (isLimit.status) {
+                                                isSave = true;
+                                                item.isAlert = true
+                                            }
+                                            // }else{
+                                            //     isAlert = true;
+                                            //     item.alertMessage = "Staff timing limit is crossing for a "+isLimit.flag;
+                                            //     item.isLimit = true;
+                                            //     item.schemeDetails = isLimit.details;
+                                            // }
+                                        }
+                                        console.log('áfteetetetet')
+                                        if (isSave) {
+                                            delete item.shiftScheme;
+                                            new AssignShift(item).save().then((saveShift) => {
+                                                //isLimit.staffLimitData.assignShiftId = saveShift._id;
+                                                //new StaffLimit(isLimit.staffLimitData).save();
+                                                //  console.log('staffLimitData', isLimit.staffLimitData)
+                                                validShift.push(item)
+                                                if (i === totalShift) {
+                                                    this.failedShiftInsert(failedShift, req, validShift, 0);
+                                                    if (failedShift.length > 0 && !from) {
+                                                        isFailed = true;
+                                                    }
+                                                    res.json({
+                                                        isAlert,
+                                                        isLimitExceed,
+                                                        isFailed,
+                                                        status: true,
+                                                        code: 1,
+                                                        message: 'shift draft created successfully'
+                                                    });
+                                                }
+                                                next();
+                                            });
+                                        } else {
+                                            // limit don't save
+                                            item.faildMessage = "Staff timing limit is crossing for a " + isLimit.flag;
+                                            item.status = 0;
+                                            failedShift.push(item);
+                                            if (i === totalShift) {
+                                                this.failedShiftInsert(failedShift, req, validShift, 0);
+                                                if (failedShift.length > 0 && !from) {
+                                                    isFailed = true;
+                                                }
+                                                res.json({
+                                                    isAlert,
+                                                    isLimitExceed,
+                                                    isFailed,
+                                                    status: true,
+                                                    code: 1,
+                                                    message: 'shift draft created successfully'
+                                                });
+                                            }
+                                        }
+
+                                    } else {
+                                        if (i === totalShift) {
+                                            this.failedShiftInsert(failedShift, req, validShift, 0);
+                                            if (failedShift.length > 0 && !from) {
+                                                isFailed = true;
+                                            }
+                                            res.json({ isAlert, isLimitExceed, isFailed, status: true, code: 1, message: 'shift draft created successfully' });
+                                        }
+                                        next();
+                                    }
+                                } else {
+                                    // const isLimit = await this.checkLimit(item);
+                                    // console.log('else limit', isLimit);
+                                    let isSave = true;
+                                    if (false) {
+                                        isLimitExceed = true;
+                                        item.isAllowPublish = false;
+                                        item.alertMessage = isLimit.message;
+                                        item.isLimit = true;
+                                        item.schemeDetails = isLimit.details;
+                                        item.isAlert = false
+                                        if (isLimit.status) {
+                                            isSave = true;
+                                            item.isAlert = true
+                                        }
+                                        // if(!isLimit.status){
+                                        //     isSave = false;
+                                        // }else{
+                                        //     isAlert = true;
+                                        //     item.alertMessage = "Staff timing limit is crossing for a "+isLimit.flag;
+                                        //     item.isLimit = true;
+                                        //     item.schemeDetails = isLimit.details;
+                                        // }
+                                    }
+                                    if (isSave) {
+                                        console.log('áfteetetetet')
+                                        delete item.shiftScheme;
+                                        //item.isMobile = isMobile;
+                                        new AssignShift(item).save().then((saveShift) => {
+                                            // isLimit.staffLimitData.assignShiftId = saveShift._id;
+                                            //new StaffLimit(isLimit.staffLimitData).save();
+                                            // console.log('staffLimitData', isLimit.staffLimitData)
+                                            item.status = 1;
+                                            validShift.push(item);
+                                            if (i === totalShift) {
+                                                this.failedShiftInsert(failedShift, req, validShift, 0);
+                                                if (failedShift.length > 0 && !from) {
+                                                    isFailed = true;
+                                                }
+                                                res.json({ isAlert, isFailed, isLimitExceed, status: true, code: 1, message: 'shift draft created successfully' });
+                                                //res.json({status: false, code: 1, message:'Something went wrong'});
+                                                // res.json({validShift, failedShift});
+                                            }
+                                            next();
+                                        });
+                                    } else {
+                                        // limit don't save
+                                        item.faildMessage = "Staff timing limit is crossing for a " + isLimit.flag;
+                                        item.status = 0;
+                                        failedShift.push(item);
+                                        if (i === totalShift) {
+                                            this.failedShiftInsert(failedShift, req, validShift, 0);
+                                            if (failedShift.length > 0 && !from) {
+                                                isFailed = true;
+                                            }
+                                            res.json({
+                                                isAlert,
+                                                isFailed,
+                                                isLimitExceed,
+                                                status: true,
+                                                code: 1,
+                                                message: 'shift draft created successfully'
+                                            });
+                                        }
+                                    }
+                                }
+                            }).catch((err) => {
+                                console.log(err);
+                                if (i === totalShift) {
+                                    this.failedShiftInsert(failedShift, req, validShift, 0);
+                                    if (failedShift.length > 0 && !from) {
+                                        isFailed = true;
+                                    }
+                                    res.json({ isAlert, isFailed, isLimitExceed, status: true, code: 1, message: 'shift draft created successfully' });
+                                }
+                                next();
+                            });
+                        } else {
+                            item.faildMessage = 'Shift is not between the week';
+                            item.status = 0;
+                            failedShift.push(item);
+                            if (i === totalShift) {
+                                if (failedShift.length > 0 && !from) {
+                                    isFailed = true;
+                                }
+                                this.failedShiftInsert(failedShift, req, validShift, 0);
+                                res.json({ isAlert, isFailed, isLimitExceed, status: true, code: 1, message: 'shift draft created successfully' });
+                                //res.json({validShift, failedShift});
+                            }
+                            next();
+                        }
+                    } else {
+                        if (i === totalShift) {
+                            this.failedShiftInsert(failedShift, req, validShift, 0);
+                            if (failedShift.length > 0 && !from) {
+                                isFailed = true;
+                            }
+                            res.json({ isAlert, isFailed, isLimitExceed, status: true, code: 1, message: 'shift draft created successfully' });
+                            //res.json({validShift, failedShift});
+                        }
+                        next();
+                        console.log('nul')
+                    }
+                });
+        } catch (e) {
+            console.log(e)
+        }
+    }
+    async getHourType(schemeDetails) {
+        if (schemeDetails.shiftSetup.assignShift.normal) {
+            return { valid: true, isOtHour: false };
+        } else {
+            return { valid: true, isOtHour: true };
+        }
+        return { valid: false }
+
+    }
+    async checkLimit(details) {
+        //console.log('deeeeeee', details);
+        // date duration staff_id
+        const schemeDetails = details.shiftScheme;
+
+        var hourTypeData = await this.getHourType(schemeDetails);
+
+        let otDuration = 0;
+        let normalDuration = 0;
+
+        if (!hourTypeData.isOtHour) {
+            normalDuration = details.duration;
+        } else {
+            otDuration = details.duration;
+        }
+
+        var date = new Date(details.date), y = date.getFullYear(), m = date.getMonth();
+        var firstDay = new Date(y, m, 1);
+        var lastDay = new Date(y, m + 1, 0);
+        //console.log('fir', firstDay, lastDay)
+        //console.log('date', new Date(date))
+        const data = await StaffLimit.find({
+            userId: details.staff_id, isAssignShift: true,
+            date: { $lte: new Date(new Date(lastDay).toISOString()), $gte: new Date(new Date(firstDay).toISOString()) },
+        }).lean();
+        // console.log('data', data);
+        let dailyDuration = details.duration;
+        let weeklyDuration = details.duration;
+        let monthlyDuration = details.duration;
+        let weekNumber = details.weekNumber;
+        let dailyOverall = dailyDuration;
+        let weekLlyOverall = dailyDuration;
+        let monthlyOverall = dailyDuration;
+        //console.log('data', data.length)
+        if (!hourTypeData.isOtHour) {
+            data.forEach((item) => {
+                // console.log('new Date(item.date)', new Date(item.date))
+                if (new Date(item.date).getDate() == new Date(date).getDate()) {
+                    //  console.log('item.normalDuration', item.normalDuration)
+                    dailyDuration += item.normalDuration;
+                    dailyOverall += item.normalDuration;;
+                    dailyOverall += item.otDuration;
+                }
+                if (new Date(item.date).getMonth() == new Date(date).getMonth()) {
+                    monthlyDuration += item.normalDuration;
+                    monthlyOverall += item.normalDuration;
+                    monthlyOverall += item.otDuration;
+                }
+                if (item.weekNumber == weekNumber) {
+                    weeklyDuration += item.normalDuration;
+                    weekLlyOverall += item.normalDuration;;
+                    weekLlyOverall += item.otDuration;
+                }
+
+            });
+        } else {
+            // ot hr
+            console.log('dailyOverall', dailyOverall)
+            data.forEach((item) => {
+                // console.log('new Date(item.date)', new Date(item.date))
+                if (new Date(item.date).getDate() == new Date(date).getDate()) {
+                    dailyDuration += item.otDuration;
+                    dailyOverall += item.otDuration;
+                    dailyOverall += item.normalDuration;
+                    console.log('dailyOverall', dailyOverall)
+                }
+                if (new Date(item.date).getMonth() == new Date(date).getMonth()) {
+                    monthlyDuration += item.otDuration;
+                    monthlyOverall += item.otDuration;
+                    monthlyOverall += item.normalDuration;
+                }
+                // console.log('item.weekNo', item.weekNumber);
+                //console.log('sss', weekNumber)
+                if (item.weekNumber == weekNumber) {
+                    weeklyDuration += item.otDuration;
+                    weekLlyOverall += item.otDuration;
+                    weekLlyOverall += item.normalDuration;
+                }
+
+            });
+        }
+        //console.log('currentDateData', dailyDuration, monthlyDuration, weeklyDuration);
+        // console.log('shify', details)
+        let dayLimit = details.shiftScheme.shiftSetup.limits.normalHr.day;
+        let weekLimit = details.shiftScheme.shiftSetup.limits.normalHr.week;;
+        let monthLimit = details.shiftScheme.shiftSetup.limits.normalHr.month;
+        console.log(details.shiftScheme.shiftSetup.limits.otHr.day)
+        console.log('details.shiftScheme.shiftSetup.limits.otHr.day.disallow', details.shiftScheme.shiftSetup.limits.otHr.day.disallow);
+        var disallow = !details.shiftScheme.shiftSetup.limits.otHr.day.disallow;
+        // if(schemeDetails.shiftSchemeType == 3){
+        //     disallow = !disallow;
+        // }
+        console.log('disallow', disallow)
+        if (hourTypeData.isOtHour) {
+            dayLimit = details.shiftScheme.shiftSetup.limits.otHr.day;
+            weekLimit = details.shiftScheme.shiftSetup.limits.otHr.week;;
+            monthLimit = details.shiftScheme.shiftSetup.limits.otHr.month;
+        }
+        let dayOverallLimit = schemeDetails.shiftSetup.limits.dayOverall;
+        let weekOverallLimit = schemeDetails.shiftSetup.limits.weekOverall;
+        let monthOverallLimit = schemeDetails.shiftSetup.limits.monthOverall;
+        //console.log('dayLimit', dayLimit)
+        let staffLimitData = {
+            normalDuration,
+            otDuration,
+            isAssignShift: true,
+            userId: details.staff_id,
+            date: details.date,
+            weekNumber: weekNumber,
+            businessUnitId: details.businessUnitId
+        }
+        //console.log('dayLimit', dayLimit);
+        if (parseInt(dayLimit.value) && parseInt(dayLimit.value) < parseInt(dailyDuration)) {
+            return { limit: true, message: 'Exceeds Daily limit', flag: 'day', details: dayLimit, status: disallow ? 0 : 1, staffLimitData } //dayLimit.disallow?0:1
+        } else if (parseInt(weekLimit.value) && parseInt(weekLimit.value) < parseInt(weeklyDuration)) {
+            return { limit: true, message: 'Exceeds Weekly limit', flag: 'week', details: weekLimit, status: disallow ? 0 : 1, staffLimitData }
+        } else if (parseInt(monthLimit.value) && parseInt(monthLimit.value) < parseInt(monthlyDuration)) {
+            return { limit: true, message: 'Exceeds Monthly limit', flag: 'month', details: monthLimit, status: disallow ? 0 : 1, staffLimitData }
+        } else if (parseInt(dayOverallLimit) && parseInt(dayOverallLimit) < parseInt(dailyOverall)) {
+            return { limit: true, message: 'Exceeds Daily Overall limit', flag: 'dayoverall', details: monthLimit, status: disallow ? 0 : 1, staffLimitData }
+        } else if (parseInt(weekOverallLimit) && parseInt(weekOverallLimit) < parseInt(weekLlyOverall)) {
+            return { limit: true, message: 'Exceeds Weekly Overall limit', flag: 'weekoverall', details: monthLimit, status: disallow ? 0 : 1, staffLimitData }
+        } else if (parseInt(monthOverallLimit) && parseInt(monthOverallLimit) < parseInt(monthlyOverall)) {
+            return { limit: true, message: 'Exceeds Monthly Overall limit', flag: 'monthoverall', details: monthLimit, status: disallow ? 0 : 1, staffLimitData }
+        }
+        return { limit: false, staffLimitData }
+
+    }
+    failedShiftInsert(failed, user, success = [], status = 0) {
+
+        // console.log('falaid',failed);
+        let d = {};
+        let description = "Uploading CSV for Draft";
+        let staff_id;
+        if (status === 1) {
+            d = user.body;
+            user.body.data = {};
+            user.body.data = d;
+            staff_id = user.user._id;
+            description = "Publishing Shift";
+        } else {
+            staff_id = user.body.data.plannedBy;
+        }
+
+        // console.log('user111',user.body);
+        const obj = {
+            businessUnitId: user.body.data.businessUnitId,
+            staff_id,
+            weekRangeEndsAt: user.body.data.weekRangeEndsAt,
+            weekRangeStartsAt: user.body.data.weekRangeStartsAt,
+            weekNumber: user.body.data.weekNumber,
+            failedShift: failed,
+            status,
+            successShift: success,
+            description
+        };
+        new AssignShiftLog(obj).save().then((saveShift) => {
+            // console.log(saveShift);
+
+        })
+
+    }
+    getBodyDataStaff(req) {
+        return new Promise((resolve, reject) => {
+            const dataRequiredObj = {
+                shift: req.body.shift,
+                shiftDetails: Array.isArray(req.body.user) ? req.body.user : [req.body.user]
+            };
+            resolve(dataRequiredObj);
+        });
+
+    }
+    getBodyData(req) {
+        return new Promise((resolve, reject) => {
+            var form = new multiparty.Form();
+            form.parse(req, function (err, fields, files) {
+                // fields fields fields
+                // console.log('fi', JSON.parse(fields.shift[0]));
+                // console.log('file', files);
+                const pathCSV = files.ff[0].path;
+                csv()
+                    .fromFile(pathCSV)
+                    .then((jsonObj) => {
+                        const dataRequiredObj = {
+                            shift: JSON.parse(fields.shift[0]),
+                            shiftDetails: jsonObj
+                        };
+                        resolve(dataRequiredObj);
+                    }).catch((err) => {
+                    reject(null);
+                });
+            });
+        });
+    }
+    createShift(shift) {
+        return new Promise((resolve, reject) => {
+            //  console.log('shift', shift)
+            new Shift(shift).save().then((insertedShift) => {
+                resolve(insertedShift._id)
+            }).catch((err) => {
+                reject(null);
+            });
+
+        });
+    }
+    async updateStaffAsRestOrOff(req, res){
+        const data = await AssignShift.findOneAndUpdate({_id:req.body.assignShiftId},{
+            $set:{
+                isOff:req.body.isOff,
+                isRest:req.body.isRest,
+                duration:0,
+                startTime:null,
+                endTime:null,
+                startTimeInSeconds:null,
+                endTimeInSeconds:null
+
+
+            }
+        });
+        if(data){
+            return res.json({success: true,msg:'Assign Shift updated'})
+        }else {
+            return res.json({success: false,msg:'Assign Shift not found'})
+        }
+    }
+    async updateStaffShift(req, res){
+        try{
+            if (!__.checkHtmlContent(req.body)) {
+                return __.out(res, 300, `You've entered malicious input`);
+            }
+            let requiredResult = await __.checkRequiredFields(req, ['assignShiftId',"StartTime","EndTime","reportLocationId"]);
+            if (requiredResult.status === false) {
+                return res.json({success: false, msg:'missing fields '+requiredResult.missingFields.toString()});
+            } else {
+                const item = req.body;
+                const timeFormat = item.timeFormat;
+                var startTime = this.getDateInUTCFormat(item.StartDate, item.StartTime, timeFormat);
+                var endTime = this.getDateInUTCFormat(item.EndDate, item.EndTime, timeFormat);
+                var startTimeInSeconds = moment(new Date(startTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();
+                var endTimeInSeconds = moment(new Date(endTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();
+                var duration = (endTimeInSeconds - startTimeInSeconds) / (3600);
+                console.log('duration', duration)
+                const details = await AssignShift.findOne({_id:item.assignShiftId});
+                const limitData = await this.checkLimitDuringTime(details,duration);
+                console.log('detailsdetails', limitData)
+                var isLimit= limitData.limit;
+               var schemeDetails = limitData.details;
+               var alertMessage = limitData.message;
+               var isAlert = false;
+                if (limitData.status) {
+                    isAlert = true;
+                }
+                const data = await AssignShift.findOneAndUpdate({_id:item.assignShiftId},{
+                    $set:{
+                        startTime,endTime,startTimeInSeconds,endTimeInSeconds,duration,subSkillSets:item.subSkillSets,
+                        reportLocationId:item.reportLocationId,
+                        isOff:false,
+                        isRest:false,
+                        isLimit:isLimit,
+                        schemeDetails:schemeDetails,
+                        alertMessage:alertMessage,
+                        isAlert:isAlert
+                    }
+                });
+                if(data){
+                    if(data.shiftDetailId){
+                        const updateShift = await ShiftDetails.findOneAndUpdate({_id:data.shiftDetailId},{
+                            $set:{
+                                startTime,endTime,startTimeInSeconds,endTimeInSeconds,duration,subSkillSets:item.subSkillSets,
+                                reportLocationId:item.reportLocationId,isLimit:isLimit
+                            }
+                        })
+                        if(updateShift){
+                            return res.json({success: true,msg:'Assign Shift and Open shift updated'})
+                        }
+                        return res.json({success: true,msg:'Assign Shift updated',limitData})
+                    }
+                    return res.json({success: true,msg:'Assign Shift updated', limitData})
+                }else{
+                    return res.json({success: false,msg:'Assign Shift not found'})
+                }
+            }
+        }catch(e){
+            console.log(e)
+            return res.json({success: false, msg:"Something went wrong"})
+        }
+
+    }
+    async updateStaffShiftRestOff(req, res){
+        try{
+            if (!__.checkHtmlContent(req.body)) {
+                return __.out(res, 300, `You've entered malicious input`);
+            }
+            let requiredResult = await __.checkRequiredFields(req, ['assignShiftId',"StartTime","EndTime","reportLocationId"]);
+            if (requiredResult.status === false) {
+                return res.json({success: false, msg:'missing fields '+requiredResult.missingFields.toString()});
+            } else {
+                const item = req.body;
+                const timeFormat = item.timeFormat;
+                var startTime = this.getDateInUTCFormat(item.StartDate, item.StartTime, timeFormat);
+                var endTime = this.getDateInUTCFormat(item.EndDate, item.EndTime, timeFormat);
+                var startTimeInSeconds = moment(new Date(startTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();
+                var endTimeInSeconds = moment(new Date(endTime), 'MM-DD-YYYY HH:mm:ss Z').utc().unix();
+                var duration = (endTimeInSeconds - startTimeInSeconds) / (3600);
+                console.log('duration', duration)
+                const data = await AssignShift.findOneAndUpdate({_id:item.assignShiftId},{
+                    $set:{
+                        startTime,endTime,startTimeInSeconds,endTimeInSeconds,duration,subSkillSets:item.subSkillSets,
+                        reportLocationId:item.reportLocationId
+                    }
+                });
+                if(data){
+                    if(data.shiftDetailId){
+                        const updateShift = await ShiftDetails.findOneAndUpdate({_id:data.shiftDetailId},{
+                            $set:{
+                                startTime,endTime,startTimeInSeconds,endTimeInSeconds,duration,subSkillSets:item.subSkillSets,
+                                reportLocationId:item.reportLocationId
+                            }
+                        })
+                        if(updateShift){
+                            return res.json({success: true,msg:'Assign Shift and Open shift updated'})
+                        }
+                        return res.json({success: true,msg:'Assign Shift updated'})
+                    }
+                    return res.json({success: true,msg:'Assign Shift updated'})
+                }else{
+                    return res.json({success: false,msg:'Assign Shift not found'})
+                }
+            }
+        }catch(e){
+            return res.json({success: false, msg:"Something went wrong"})
+        }
+
+    }
+    async read(req, res) {
+        // console.log(req.body);
+        //return res.send('hey');
+        const usersOfBu = await User.find({ $or: [{ parentBussinessUnitId: req.body.businessUnitId }, { viewBussinessUnitId: req.body.businessUnitId }, { planBussinessUnitId: req.body.businessUnitId }] },
+            { _id: 1 });
+
+        console.log('bsadh', moment(req.body.weekRangeStartsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format());
+        console.log('enddd', moment(req.body.weekRangeEndsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format());
+        const ddd = moment(new Date(req.body.weekRangeStartsAt)).utc().format('MM-DD-YYYY HH:mm:ss Z');
+        const end = moment(new Date(req.body.weekRangeStartsAt)).utcOffset(480).format('MM-DD-YYYY HH:mm:ss Z');
+
+        console.log('format', ddd);
+        console.log('agian', moment(ddd, 'MM-DD-YYYY HH:mm:ss Z').utc().format())
+        //weekRangeStartsAt:moment(req.body.weekRangeStartsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format(),
+        // weekRangeEndsAt:moment(req.body.weekRangeEndsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format()
+        // return res.send('aaaa');
+        const year = new Date(ddd).getFullYear();
+        const month = new Date(ddd).getMonth() + 1;
+        const day = new Date(ddd).getDate()//-1; // ashish
+        console.log('yy', year, month, day);
+        const where = {
+            //  staff_id:{$in: usersOfBu},
+            businessUnitId: req.body.businessUnitId,
+            $and: [
+                { "$expr": { "$eq": [{ "$year": "$weekRangeStartsAt" }, year] } },
+                { '$expr': { "$eq": [{ "$month": "$weekRangeStartsAt" }, month] } },
+                { "$expr": { "$eq": [{ "$dayOfMonth": "$weekRangeStartsAt" }, day] } }]
+
+        };
+        console.log(JSON.stringify(where))
+        const findOrFindOne = AssignShift.find(where);
+        let shifts1 = await findOrFindOne.select('staff_id staffAppointmentId staffRoleId _id date reportLocationId startTime endTime day status ' +
+            'shiftChangeRequestStatus subSkillSets shiftRead draftStatus shiftChangeRequestMessage duration shiftDetailId schemeDetails alertMessage isLimit isAlert isAllowPublish isOff isRest splitStartTime splitEndTime isSplitShift isRecalled isRecallAccepted').populate([{
+            path: 'staff_id',
+            select: 'name contactNumber email profilePicture staffId schemeId subSkillSets',
+            populate: [{
+                path: 'schemeId',
+                select: 'schemeName'
+            },
+                {
+                    path: 'subSkillSets',
+                    select: 'name status',
+                    match: {
+                        status: 1
+                    },
+                    populate: {
+                        path: 'skillSetId',
+                        select: 'name status',
+                        match: {
+                            status: 1
+                        }
+                    }
+                }]
+        }, {
+            path: 'shiftDetailId',
+            select: 'isExtendedShift extendedStaff'
+        },
+            {
+                path: 'subSkillSets',
+                select: 'name status',
+                match: {
+                    status: 1
+                },
+                populate: {
+                    path: 'skillSetId',
+                    select: 'name status',
+                    match: {
+                        status: 1
+                    }
+                }
+            }
+            // , {
+            //     path: 'staffAppointmentId',
+            //     select: 'name'
+            // },{
+            //     path: 'staffRoleId',
+            //     select: 'name'
+            // }
+        ]);
+
+        let shifts = JSON.stringify(shifts1);
+        shifts = JSON.parse(shifts);
+        console.log("shifts: ", shifts.length);
+        if (shifts.length > 0) {
+            var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            for (let i = 0; i <= shifts.length - 1; i++) {
+                let item = shifts[i];
+
+
+
+                let ops = await OpsGroup.findOne({ userId: item.staff_id._id }, { _id: 1, opsGroupName: 1 });
+                let user = await User.findOne({ _id: item.staff_id._id }, { _id: 0, role: 1, appointmentId: 1 }).populate([
+                    {
+                        path: 'role',
+                        select: 'name'
+                    },
+                    { path: 'appointmentId', select: 'name' }
+                ]);
+                let attendance = await Attendance.findOne({shiftDetailId:item.shiftDetailId,userId:item.staff_id});
+                if(attendance){
+                    item.attendance = attendance;
+                }else{
+                    item.attendance = null;
+                }
+                if (user) {
+                    item.staffAppointmentId = user.appointmentId;
+                    item.staffRoleId = user.role;
+                }
+                //console.log('item.startTime', item.startTime, item._id);
+                console.log('item.date', item.date)
+                var d = moment(new Date(item.date)).utcOffset(req.body.timeZone).format('MM-DD-YYYY');//new Date(item.startTime);
+                console.log('d',d);
+                const date = moment(d, "MM-DD-YYYY");
+                const dow = date.day();
+                console.log(dow);
+                // console.log('item.startTime',d, new Date(d))
+                var dayName = days[dow];
+                item.dayName = dayName;
+                if (item.shiftDetailId && item.shiftDetailId.isExtendedShift) {
+                    // console.log('item.shiftDetailId.isExtendedShift', item.shiftDetailId.isExtendedShift);
+                    item.startTime = item.shiftDetailId.extendedStaff[0].startDateTime;
+                    item.endTime = item.shiftDetailId.extendedStaff[0].endDateTime;
+
+                    item.isExtendedShift = item.shiftDetailId.isExtendedShift;
+                    item.shiftDetailId = item.shiftDetailId._id;
+                }
+                if (ops) {
+                    item.staff_id["opsGroupName"] = ops.opsGroupName;
+                }
+                //   console.log("ITEM IS: ",item);
+            }
+
+            shifts = _.mapValues(_.groupBy(shifts, 'dayName'));
+            // console.log('shifts', JSON.stringify(shifts))
+            res.json({ status: true, shifts, message: 'Week Data' })
+        } else {
+            res.json({ status: false, shifts: [], message: 'No Week Data Found' });
+        }
+    }
+    async shiftView(req, res) {
+        console.log(req.body);
+        const result = await AssignShift.updateMany({ _id: { $in: req.body.assignShiftIds } }, { shiftRead: 1 });
+        res.json({ status: true, message: 'Shift Read Successfully' });
+    }
+    async changeRequest(req, res) {
+        console.log(req.body);
+        const result = await AssignShift.updateMany({ _id: req.body.assignShiftId }, {
+            shiftRead: 1, shiftChangeRequestMessage: req.body.message,
+            shiftChangeRequestStatus: 1
+        });
+        res.json({ status: true, message: 'Requested Successfully' });
+    }
+    async approveRequest(req, res) {
+        console.log(req.body);
+        if (req.body.isApprove) {
+            AssignShift.findOneAndUpdate({ _id: req.body.assignShiftId }, {
+                shiftRead: 0,
+                shiftChangeRequestStatus: 2
+            }, { upsert: true }).then((result) => {
+                if (result) {
+                    //const shiftDetailId = result.
+                    res.json(result)
+                } else {
+                    res.json({ status: 1, message: "Assign Shift Not Found" });
+                }
+
+            });
+        } else {
+            const result = await AssignShift.updateMany({ _id: req.body.assignShiftId }, {
+                shiftRead: 0,
+                shiftChangeRequestStatus: 3
+            });
+        }
+    }
+
+    getDateInUTCFormat1(date, time, timeZone) {
+
+
+        const dateTime = `${date} ${time} ${timeZone}`;
+        // console.log('datetime', dateTime);
+        return moment(dateTime, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+    }
+    async reduceLimit(schemeDetails, details, from = 0) {
+        var hourTypeData = await this.getHourType(schemeDetails);
+        var otDuration = 0;
+        var normalDuration = 0;
+        if (from == 0) {
+            if (hourTypeData.isOtHour) {
+                otDuration = (-1) * details.duration;
+            } else {
+                normalDuration = (-1) * details.duration;
+            }
+        } else {
+            if (hourTypeData.isOtHour) {
+                otDuration = (1) * details.duration;
+            } else {
+                normalDuration = (1) * details.duration;
+            }
+        }
+        const value = await StaffLimit.update({ userId: details.staff_id, assignShiftId: details._id }, { $inc: { normalDuration: normalDuration, otDuration: otDuration } })
+        return value
+    }
+    async checkLimitDuringTime(details, duration) {
+        var schemeDetails = await User.findOne({ _id: details.staff_id }).populate([
+            {
+                path: 'schemeId'
+            }
+        ]);
+        schemeDetails = schemeDetails.schemeId;
+        //console.log('schemeDetails', schemeDetails);
+        // decrease duration to zero
+        var reduceData = await this.reduceLimit(schemeDetails, details, 0);
+
+        // check limit with this duration
+
+        console.log(details.duration, duration);
+        details.duration = duration;
+        details.shiftScheme = schemeDetails;
+        var limitData = await this.checkLimit(details);
+        console.log(limitData);
+        // add this duration to that
+        var addData = await this.reduceLimit(schemeDetails, details, 1);
+        console.log(details.duration, duration);
+        return limitData;
+    }
+    async alertAction(req, res) {
+        // userId
+        // assignShiftId
+        // from
+        if (req.body.from == 'yes') {
+            var aa = await AssignShift.findOneAndUpdate({ _id: req.body.assignShiftId }, { isAllowPublish: true, isLimit: false, isAlert: false });
+            return res.json({ status: true, message: 'You have selected to proceed' });
+
+        } else {
+            var aa = await AssignShift.findOneAndUpdate({ _id: req.body.assignShiftId }, { isAllowPublish: false, isLimit: true, isAlert: true });
+            return res.json({ status: true, message: 'You have selected not to proceed' });
+            //var value await StaffLimit.findByIdAndUpdate({userId: req.body.})
+
+        }
+    }
+    async changeShiftTime(req, res) {
+        //  console.log(req.body);
+        //console.log('req.body.startDateTime', req.body.startDateTime.split('GMT'))
+        let dateSplit = req.body.startDateTime.split('GMT');
+        let timeZone = dateSplit[1];
+        timeZone = timeZone.substr(1);
+        let timeFormatSign = dateSplit[1][0] == '+' ? '-' : '+';
+        console.log('ti', timeFormatSign)
+        // dateSplit[1][0] = timeFormatSign;
+        let newDate = dateSplit[0] + 'GMT' + timeFormatSign + timeZone;
+        console.log('newww', newDate)
+        console.log(new Date(req.body.startDateTime), new Date());
+
+        if (new Date(req.body.startDateTime).getTime() >= new Date(req.body.endDateTime).getTime()) {
+            return res.json({ status: false, message: 'Assign Shift start time is grater then end time' });
+        }
+        if (new Date().getTime() > new Date(newDate).getTime()) {
+            return res.json({ status: false, message: 'Assign Shift was ended' });
+        }
+        const result = await AssignShift.findOne({ _id: req.body.assignShiftId });
+
+        if (result) {
+            var startSecond = new Date(req.body.startDateTime).getTime();
+            var endSecond = new Date(req.body.endDateTime).getTime()
+            var newDuration = (endSecond - startSecond) / (3600000);
+            var limitData = await this.checkLimitDuringTime(result, newDuration);
+            var isLimit = result.isLimit;
+            var isAlert = result.isAlert
+            var alertMessage = result.alertMessage;
+            var schemeDetails = result.schemeDetails;
+            var isAllowPublish = result.isAllowPublish;
+            if (limitData.limit) {
+                isLimit = true;
+                isAllowPublish = false;
+                //isAllowPublish
+                schemeDetails = limitData.details;
+                alertMessage = limitData.message;
+                if (limitData.status) {
+                    isAlert = true;
+                } else {
+                    isAlert = false;
+                }
+            } else {
+                isAllowPublish = true;
+                isLimit = false;
+                isAlert = false;
+                alertMessage = '';
+            }
+            console.log('updated', result.startTime, req.body.startDateTime);
+            console.log('updated date', new Date(result.startTime), new Date(req.body.startDateTime));
+            // if(new Date(result.startTime).getTime()> new Date(req.body.startDateTime).getTime()){
+            AssignShift.findOneAndUpdate({ _id: req.body.assignShiftId }, {
+                shiftRead: 0,
+                startTime: req.body.startDateTime, startTimeInSeconds: new Date(req.body.startDateTime).getTime(),
+                endTimeInSeconds: new Date(req.body.endDateTime).getTime(), endTime: req.body.endDateTime
+                , duration: newDuration, isLimit, isAlert, alertMessage, schemeDetails, isAllowPublish
+
+            }, { new: true }).then(async (resultNew) => {
+                if (!result.draftStatus) {
+                    return res.json({ status: true, message: "Assign Shift updated.", result });
+                } else {
+                    const shiftUpdate = await ShiftDetails.findOneAndUpdate({ _id: result.shiftDetailId }, {
+                        startTime: req.body.startDateTime,
+                        duration: newDuration,
+                        startTimeInSeconds: new Date(req.body.startDateTime).getTime(),
+                        endTimeInSeconds: new Date(req.body.endDateTime).getTime(), endTime: req.body.endDateTime
+                    });
+                    return res.json({ status: true, message: "Assign Shift updated.", result });
+                }
+            });
+            // }else {
+            //     return res.json({status: false, message: "Assign Shift is already started", result});
+            // }
+            var userId = [];
+            userId.push(result.staff_id);
+            var collapseKey = req.body.assignShiftId;
+            let notificationObj = {
+                title: 'Your assigned shift timings have been updated.',
+                body: 'Your assigned shift timings have been updated.',
+                bodyText: 'Your assigned shift timings have been updated.',
+                bodyTime: req.body.startDateTime,
+                bodyTimeFormat: ['DD-MMM-YYYY HH:mm'],
+            }
+
+            this.sendNotification(userId, notificationObj, collapseKey);
+            //const shiftDetailId = result.
+
+        } else {
+            res.json({ status: false, message: "Assign Shift Not Found" });
+        }
+    }
+    async publishAll(req, res) {
+        console.log(req.body.assignShiftIds);
+        const failPublish = [];
+        const insertedShift = [];
+        // const publishUserId =[];
+        let notificationObj = {};
+        const allShifts = await this.getAllDraftShift(req.body.assignShiftIds);
+        console.log('1');
+        if (allShifts && allShifts.length > 0) {
+            notificationObj = {
+                title: 'New Shift has been assigned',
+                body: 'New shifts has been assigned, please see details.',
+                bodyText: 'New shifts has been assigned, please see details.',
+                bodyTime: allShifts[0].date,
+                bodyTimeFormat: ['DD-MMM-YYYY HH:mm'],
+            }
+            for (let i = 0; i < allShifts.length; i++) {
+                console.log('2');
+                const publishUserId = [];
+                const item = allShifts[i];
+                const insertShift = await this.addShift(item);
+                console.log('3');
+                if (insertShift) {
+                    let insertShiftDetail = await this.addShiftDetail(item, insertShift);
+                    let insertShiftDetailSplit;
+                    if(item.isSplitShift){
+                        insertShiftDetailSplit = await this.addShiftDetailSplit(item, insertShift);
+                    }
+                    if (insertShiftDetail) {
+                        // update shift
+                        // applied
+                        const appliedStaff = await this.addAppliedStaff(insertShift._id, insertShiftDetail._id, item.staff_id)
+                        let appliedStaffSplit;
+                        if(item.isSplitShift){
+                            appliedStaffSplit = await this.addAppliedStaff(insertShift._id, insertShiftDetailSplit._id, item.staff_id)
+                        }
+                        if (appliedStaff) {
+                            // updateShift
+                            const updateInsertShift = await this.updateShift(insertShift._id, insertShiftDetail._id);
+                            let updateInsertShiftSplit;
+                            if(item.isSplitShift){
+                                updateInsertShiftSplit = await this.updateShift(insertShift._id, insertShiftDetailSplit._id)
+                            }
+                            // updateShiftdetails
+                            const updateInsertShiftDetail = await this.updateShiftDetail(appliedStaff._id, insertShiftDetail._id);
+                            if(item.isSplitShift){
+                                const updateInsertShiftDetailSplit = await this.updateShiftDetail(appliedStaffSplit._id, insertShiftDetailSplit._id);
+                            }
+                            const updateInsertAssignShift = await this.updateAssignShift(insertShiftDetail._id, item._id);
+                            insertShiftDetail = JSON.stringify(insertShiftDetail);
+                            insertShiftDetail = JSON.parse(insertShiftDetail);
+                            insertShiftDetail.status = 1;
+                            console.log('itemitemitem', item.reportLocationName);
+                            const staffLimitUpdate = await StaffLimit.updateOne({ assignShiftId: item._id }, {
+                                $set: {
+                                    shiftDetailId: insertShiftDetail._id,
+                                    shiftId: insertShift._id
+                                }
+                            });
+                            console.log('staffLimitUpdate', staffLimitUpdate);
+                            insertShiftDetail.reportLocationName = item.reportLocationName;
+                            insertShiftDetail.faildMessage = 'Shift Publish Successfully';
+                            if(item.isSplitShift){
+
+                            }
+                            publishUserId.push(item.staff_id)
+                            insertedShift.push(insertShiftDetail);
+                        } else {
+                            item.faildMessage = 'Applying error';
+                            item.status = 0;
+                            failPublish.push(item);
+                            // delete inserted shift addShift
+                        }
+                    } else {
+
+                    }
+                } else {
+                    item.faildMessage = 'Shift Adding Error';
+                    item.status = 0;
+                    failPublish.push(item);
+                }
+                this.sendNotification(publishUserId, notificationObj, item._id);
+
+            }
+            console.log('4');
+            this.failedShiftInsert(failPublish, req, insertedShift, 1)
+            // this.sendNotification(publishUserId,notificationObj)
+            res.json({ status: true, message: 'Publish Succesfully', code: 1, data: allShifts, insertedShift });
+        } else {
+            res.json({ status: false, message: 'Something went wrong', code: 0 });
+        }
+
+    }
+    async publishAllFromMobile(assignShiftIds) {
+        //console.log(req.body.);
+        const failPublish = [];
+        const insertedShift = [];
+        // const publishUserId =[];
+        let notificationObj = {};
+        const allShifts = await this.getAllDraftShift(assignShiftIds);
+        console.log('1');
+        if (allShifts && allShifts.length > 0) {
+            notificationObj = {
+                title: 'New Shift has been assigned',
+                body: 'New shifts has been assigned, please see details.',
+                bodyText: 'New shifts has been assigned, please see details.',
+                bodyTime: allShifts[0].date,
+                bodyTimeFormat: ['DD-MMM-YYYY HH:mm'],
+            }
+            for (let i = 0; i < allShifts.length; i++) {
+                console.log('2');
+                const publishUserId = [];
+                const item = allShifts[i];
+                const insertShift = await this.addShift(item);
+                console.log('3');
+                if (insertShift) {
+                    let insertShiftDetail = await this.addShiftDetail(item, insertShift);
+                    let insertShiftDetailSplit;
+                    if(item.isSplitShift){
+                        insertShiftDetailSplit = await this.addShiftDetailSplit(item, insertShift);
+                    }
+                    if (insertShiftDetail) {
+                        // update shift
+                        // applied
+                        const appliedStaff = await this.addAppliedStaff(insertShift._id, insertShiftDetail._id, item.staff_id)
+                        let appliedStaffSplit;
+                        if(item.isSplitShift){
+                            appliedStaffSplit = await this.addAppliedStaff(insertShift._id, insertShiftDetailSplit._id, item.staff_id)
+                        }
+                        if (appliedStaff) {
+                            // updateShift
+                            const updateInsertShift = await this.updateShift(insertShift._id, insertShiftDetail._id);
+                            let updateInsertShiftSplit;
+                            if(item.isSplitShift){
+                                updateInsertShiftSplit = await this.updateShift(insertShift._id, insertShiftDetailSplit._id)
+                            }
+                            // updateShiftdetails
+                            const updateInsertShiftDetail = await this.updateShiftDetail(appliedStaff._id, insertShiftDetail._id);
+                            if(item.isSplitShift){
+                                const updateInsertShiftDetailSplit = await this.updateShiftDetail(appliedStaffSplit._id, insertShiftDetailSplit._id);
+                            }
+                            const updateInsertAssignShift = await this.updateAssignShift(insertShiftDetail._id, item._id);
+                            insertShiftDetail = JSON.stringify(insertShiftDetail);
+                            insertShiftDetail = JSON.parse(insertShiftDetail);
+                            insertShiftDetail.status = 1;
+                            console.log('itemitemitem', item.reportLocationName);
+                            const staffLimitUpdate = await StaffLimit.updateOne({ assignShiftId: item._id }, {
+                                $set: {
+                                    shiftDetailId: insertShiftDetail._id,
+                                    shiftId: insertShift._id
+                                }
+                            });
+                            console.log('staffLimitUpdate', staffLimitUpdate);
+                            insertShiftDetail.reportLocationName = item.reportLocationName;
+                            insertShiftDetail.faildMessage = 'Shift Publish Successfully';
+                            publishUserId.push(item.staff_id)
+                            insertedShift.push(insertShiftDetail);
+                        } else {
+                            item.faildMessage = 'Applying error';
+                            item.status = 0;
+                            failPublish.push(item);
+                            // delete inserted shift addShift
+                        }
+                    } else {
+
+                    }
+                } else {
+                    item.faildMessage = 'Shift Adding Error';
+                    item.status = 0;
+                    failPublish.push(item);
+                }
+                this.sendNotification(publishUserId, notificationObj, item._id);
+
+            }
+            console.log('4');
+            // newashish
+            //this.failedShiftInsert(failPublish, req, insertedShift, 1)
+            // this.sendNotification(publishUserId,notificationObj)
+            return;
+            res.json({ status: true, message: 'Publish Succesfully', code: 1, data: allShifts, insertedShift });
+        } else {
+            return;// res.json({ status: false, message: 'Something went wrong', code: 0 });
+        }
+
+    }
+    async sendNotification(userId, obj, collapsekey) {
+
+        const unAssignUser = await User.find({ _id: { $in: userId } })
+            .select("_id deviceToken")
+            .lean();
+
+        const usersDeviceTokens = [];
+
+        for (let j = 0; j <= unAssignUser.length - 1; j++) {
+            let token = unAssignUser[j];
+            if (token.deviceToken) {
+                usersDeviceTokens.push(token.deviceToken)
+            }
+        }
+
+        let collapseKey = collapsekey;
+
+        FCM.push(usersDeviceTokens, obj, collapseKey);
+        // let collapseKey = 1; /*unique id for this particular ballot */
+
+    }
+
+    async dateList(req, res) {
+        //console.log(req.body);
+        const obj = {
+        };
+        obj.weekRangeStartsAt = moment(req.body.weekRangeStartsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+        obj.weekRangeEndsAt = moment(req.body.weekRangeEndsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format();
+        obj.businessUnitId = req.body.businessUnitId;
+        obj.userId = req.body.userId;
+        const startDate = new Date(obj.weekRangeStartsAt);
+        const endDate = new Date(obj.weekRangeEndsAt);
+        const dateArray = getDates(startDate, endDate);
+        function getDates(startDate, stopDate) {
+            var dateArray = [];
+            var currentDate = moment(startDate);
+            var stopDate = moment(stopDate);
+            while (currentDate <= stopDate) {
+                dateArray.push(moment(currentDate).format('MM-DD-YYYY'))
+                currentDate = moment(currentDate).add(1, 'days');
+            }
+            return dateArray;
+        }
+        AssignShift.find({
+            staff_id: obj.userId, businessUnitId: obj.businessUnitId,
+            weekRangeStartsAt: obj.weekRangeStartsAt, weekRangeEndsAt: obj.weekRangeEndsAt
+        }, { day: 1, _id: 0 }).then((result) => {
+            const userDate = [];
+            result.forEach((item) => {
+                if (!userDate.includes(item.day)) {
+                    userDate.push(item.day);
+                }
+            });
+            Array.prototype.diff = function (a) {
+                return this.filter(function (i) { return a.indexOf(i) < 0; });
+            };
+            const shiftNotPresent = dateArray.diff(userDate);
+            res.json({ data: result, dateArray, userDate, shiftNotPresent })
+        });
+    }
+    async getRole(req, res) {
+        try {
+            let where = {
+                'companyId': req.user.companyId,
+                'status': {
+                    $ne: 3 /* $ne => not equal*/
+                }
+            };
+            let findOrFindOne;
+            /*if ID given then it acts as findOne which gives object else find which gives array of object*/
+            if (req.body.roleId) {
+                where._id = req.body.roleId;
+                findOrFindOne = Appointment.findOne(where);
+            } else
+                findOrFindOne = Appointment.find(where);
+
+            let roles = await findOrFindOne.lean();
+
+            __.out(res, 201, {
+                roles: roles
+            });
+
+        } catch (err) {
+            __.log(err);
+            __.out(res, 500, err);
+        }
+    }
+    async readLog(req, res) {
+        const where = {
+            businessUnitId: req.body.businessUnitId,
+            weekRangeStartsAt: moment(req.body.weekRangeStartsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format(),
+            weekRangeEndsAt: moment(req.body.weekRangeEndsAt, 'MM-DD-YYYY HH:mm:ss Z').utc().format()
+        };
+        const data = await AssignShiftLog.find(where).populate([{
+            path: 'staff_id',
+            select: 'name staffId',
+        }]).sort({ _id: -1 });
+
+        return res.json({ status: true, data });
+    }
+    updateAssignShift(shiftDetailId, assginShiftId) {
+        return new Promise(async (resolve, reject) => {
+            const insertedShiftDetailsIdArray = [];
+            insertedShiftDetailsIdArray.push(shiftDetailId);
+            AssignShift.updateOne({
+                _id: assginShiftId
+            }, {
+                $set: {
+                    shiftDetailId: shiftDetailId,
+                    draftStatus: 1
+                }
+            }).then((result) => {
+                //  console.log('updateshift', result);
+
+                resolve(result);
+            }).catch((err) => {
+                reject(null);
+            });
+        });
+    }
+    getAllDraftShift(shiftId) {
+        return new Promise((resolve, reject) => {
+            AssignShift.find({ _id: { $in: shiftId }, draftStatus: 0 }).then((data) => {
+                resolve(data);
+            }).catch((err) => {
+                reject(null);
+            });
+        });
+    }
+    addAppliedStaff(shiftId, shiftDetailsId, flexiStaff) {
+        return new Promise((resolve, reject) => {
+            const obj = {
+                shiftId,
+                shiftDetailsId,
+                flexiStaff,
+                status: 1
+            }
+            new AppliedStaff(obj).save().then((result) => {
+                resolve(result)
+            }).catch((err) => {
+                reject(null);
+            });
+        });
+    }
+    addShift(shift) {
+        return new Promise((resolve, reject) => {
+            const shiftObj = {
+                businessUnitId: shift.businessUnitId,
+                weekRangeStartsAt: shift.weekRangeStartsAt,
+                weekRangeEndsAt: shift.weekRangeEndsAt,
+                weekNumber: shift.weekNumber,
+                plannedBy: shift.plannedBy,
+                status: 1
+            };
+            new Shift(shiftObj).save().then((result) => {
+                resolve(result)
+            }).catch((err) => {
+                reject(null);
+            });
+        });
+    }
+    updateShift(shiftId, shiftDetailId) {
+        return new Promise((resolve, reject) => {
+            const insertedShiftDetailsIdArray = [];
+            insertedShiftDetailsIdArray.push(shiftDetailId);
+            Shift.updateOne({
+                _id: shiftId
+            }, {
+                $set: {
+                    shiftDetails: insertedShiftDetailsIdArray
+                }
+            }).then((result) => {
+                //console.log('updateshift', result);
+                resolve(result);
+            }).catch((err) => {
+                reject(null);
+            });
+        });
+    }
+    addShiftDetail(shiftDetail, shift) {
+        return new Promise((resolve, reject) => {
+            const shiftObj = {
+                date: shiftDetail.date,
+                startTime: shiftDetail.startTime,
+                endTime: shiftDetail.endTime,
+                reportLocationId: shiftDetail.reportLocationId,
+                startTimeInSeconds: shiftDetail.startTimeInSeconds,
+                endTimeInSeconds: shiftDetail.endTimeInSeconds,
+                shiftId: shift._id,
+                duration: shiftDetail.duration,
+                day: shiftDetail.day,
+                confirmedStaffs: shiftDetail.confirmedStaffs,
+                subSkillSets: shiftDetail.subSkillSets,
+                isAssignShift: true,
+                draftId: shiftDetail._id,
+                backUpStaffNeedCount: 0,
+                staffNeedCount: 1,
+                totalStaffNeedCount: 1,
+                status: 1,
+                isOff: shiftDetail.isOff,
+                isRest: shiftDetail.isRest,
+                isSplitShift:shiftDetail.isSplitShift
+
+            };
+            new ShiftDetails(shiftObj).save().then((result) => {
+                resolve(result)
+            }).catch((err) => {
+                reject(null);
+            });
+        });
+    }
+    addShiftDetailSplit(shiftDetail, shift) {
+        return new Promise((resolve, reject) => {
+            const shiftObj = {
+                date: shiftDetail.date,
+                startTime: shiftDetail.splitStartTime,
+                endTime: shiftDetail.splitEndTime,
+                reportLocationId: shiftDetail.reportLocationId,
+                startTimeInSeconds: shiftDetail.splitStartTimeInSeconds,
+                endTimeInSeconds: shiftDetail.splitEndTimeInSeconds,
+                shiftId: shift._id,
+                duration: shiftDetail.duration,
+                day: shiftDetail.day,
+                confirmedStaffs: shiftDetail.confirmedStaffs,
+                subSkillSets: shiftDetail.subSkillSets,
+                isAssignShift: true,
+                draftId: shiftDetail._id,
+                backUpStaffNeedCount: 0,
+                staffNeedCount: 1,
+                totalStaffNeedCount: 1,
+                status: 1,
+                isOff: shiftDetail.isOff,
+                isRest: shiftDetail.isRest,
+                isSplitShift: true
+
+            };
+            new ShiftDetails(shiftObj).save().then((result) => {
+                resolve(result)
+            }).catch((err) => {
+                reject(null);
+            });
+        });
+    }
+    updateShiftDetail(appliedId, shiftDetailId) {
+        return new Promise((resolve, reject) => {
+            const insertedShiftDetailsIdArray = [];
+            insertedShiftDetailsIdArray.push(appliedId);
+            ShiftDetails.updateOne({
+                _id: shiftDetailId
+            }, {
+                $set: {
+                    appliedStaffs: insertedShiftDetailsIdArray
+                }
+            }).then((result) => {
+                //console.log('updateshift', result);
+                resolve(result);
+            }).catch((err) => {
+                reject(null);
+            });
+        });
+    }
+    async getStaffById(req, res) {
+        let user = await User.findOne({ staffId: req.params.staffId },
+            { _id: 0, role: 1, appointmentId: 1 })
+            .populate([
+                {
+                    path: 'role',
+                    select: 'name'
+                },
+                { path: 'appointmentId', select: 'name' },
+                {
+                    path: 'subSkillSets',
+                    select: 'name status',
+                    match: {
+                        status: 1
+                    },
+                    populate: {
+                        path: 'skillSetId',
+                        select: 'name status',
+                        match: {
+                            status: 1
+                        }
+                    }
+                },{
+                    path: "schemeId",
+                    "select": "shiftSchemeType shiftSetup"
+                }
+            ]);
+        console.log("user------one------", user);
+        if (user.schemeId && (user.schemeId.shiftSchemeType == 2 || user.schemeId.shiftSchemeType == 3)) {
+            let assignShift = AssignShift.findOne({ staffId: req.params.staffId });
+            let shifts1 = await assignShift.select('staff_id startTime endTime ').populate([{
+                path: 'staff_id',
+                select: 'name contactNumber email profilePicture staffId schemeId subSkillSets',
+                populate:[
+                    {
+                        path: 'role',
+                        select: 'name'
+                    },
+                    { path: 'appointmentId', select: 'name' },
+                    {
+                        path: 'subSkillSets',
+                        select: 'name status',
+                        match: {
+                            status: 1
+                        },
+                        populate: {
+                            path: 'skillSetId',
+                            select: 'name status',
+                            match: {
+                                status: 1
+                            }
+                        }
+                    },{
+                        path: "schemeId",
+                        "select": "shiftSchemeType shiftSetup"
+                    }]
+
+            },
+            ]);
+
+            let shifts = JSON.stringify(shifts1);
+            shifts = JSON.parse(shifts);
+        if (shifts.length > 0) {
+                var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                for (let i = 0; i <= shifts.length - 1; i++) {
+                    let item = shifts[i];
+                    console.log("item------------", item);
+                }
+            }
+
+
+
+            console.log("assignShift-----------------", shifts);
+            if (shifts) {
+                shifts.user = user;
+                res.json({ status: true, isScheme:true, user, shifts, message: 'Week Data' })
+                console.log("user------------------------", user);
+            }
+            else {
+            res.json({ status: false, isScheme:true, user, shifts: [], message: 'No Data Found' });
+            }
+        }else{
+            res.json({ status: false, isScheme:false, shifts: [], message: 'Assign Shift Scheme not assigned' });
+        }
+
+    }
+    async deleteShift(req, res){
+        try{
+            const assignShiftId = req.body.assignShiftId;
+            const userId = req.body.userId;
+            let shiftId = [];
+            let shiftDetailsId = [];
+            for(let i=0; i<assignShiftId.length; i++){
+                const id = assignShiftId[i];
+                const assignShiftData = await AssignShift.findOneAndRemove({_id:id, staff_id:userId});
+                if(assignShiftData && assignShiftData.shiftDetailId){
+                    const shiftDetailData = await ShiftDetails.findOneAndRemove({_id:assignShiftData.shiftDetailId});
+                    if(shiftDetailData){
+                        const shiftData = await Shift.findOneAndRemove({_id:shiftDetailData.shiftId});
+                    }
+                }
+            }
+            return res.status(200).json({success: true, msg:'Deleted Successfully'});
+        }catch(e){
+            console.log(e)
+            return res.status(500).json({success: false, msg:'Something went wrong'});
+        }
+    }
+    async deleteShiftSingle(req, res){
+        try{
+            const assignShiftId = req.body.assignShiftId;
+            const userId = req.body.userId;
+            let shiftId = [];
+            let shiftDetailsId = [];
+            for(let i=0; i<assignShiftId.length; i++){
+                const id = assignShiftId[i];
+                const assignShiftData = await AssignShift.findOneAndRemove({_id:id, staff_id:userId});
+                if(assignShiftData && assignShiftData.shiftDetailId){
+                    const shiftDetailData = await ShiftDetails.findOneAndRemove({_id:assignShiftData.shiftDetailId});
+                    if(shiftDetailData){
+                        const shiftData = await Shift.findOneAndRemove({_id:shiftDetailData.shiftId});
+                    }
+                }
+            }
+            return res.status(200).json({success: true, msg:'Deleted Successfully'});
+        }catch(e){
+            console.log(e)
+            return res.status(500).json({success: false, msg:'Something went wrong'});
+        }
+    }
+}
+/* */
+assignShift = new assignShift();
+module.exports = assignShift;

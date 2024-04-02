@@ -1,0 +1,39 @@
+<style>    
+    .question{
+        width:100%;
+        font-weight: bold;
+        font-size: 12px;
+    }
+    .answer{
+        line-height: 0.8rem;
+        font-size: 12px;
+    }
+    body{
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 12px;
+    }
+    .main{
+        width:100%; text-align:center;
+    }
+    </style>
+<body>
+    <div class="main">
+        <% if (payload.attachementAvailable) { %>
+            <img src="<%=payload.welComeAttachement%>" width="100" height="auto" />
+          <% } %>
+          </div>
+          <br />
+    <div style="text-align: center;" class="question"><%=payload.title%></div>
+    <div style="text-align: center;"><%=payload.welComeMessage%></div>
+    <% if (!!payload.formId) { %>
+        <div class="question">Form Id</div>
+        <div class="answer"><%= payload.formId %></div>
+        <br />
+    <% } %>
+    <% payload.questions.forEach(function(response){ %>
+        <div class="question"><%= response.question %></div>
+        <div class="answer"><%= response.answer %></div>
+        <br />
+    <% }) %>
+    <p style="text-align: center;"><%= payload.closingMessage %></p>
+</body>

@@ -1,0 +1,63 @@
+Tue, 05 Mar 2024 11:24:22 GMT | INFO | backend.log | checkFile | data:{"soruceUser":"5a98fb9536ab4f444b427176"} | 
+Tue, 05 Mar 2024 11:25:45 GMT | INFO | backend.log | checkFile | data:{"soruceUser":"5a98fb9536ab4f444b427176"} | 
+Tue, 05 Mar 2024 11:25:45 GMT | INFO | backend.log | removed virus file | 
+Tue, 05 Mar 2024 11:26:40 GMT | INFO | backend.log | checkFile | data:{"soruceUser":"5a98fb9536ab4f444b427176"} | 
+Tue, 05 Mar 2024 11:27:04 GMT | INFO | backend.log | checkFile | data:{"soruceUser":"5a98fb9536ab4f444b427176"} | 
+Tue, 05 Mar 2024 11:54:57 GMT | INFO | backend.log | DATABASE CONNECTED IS:  | 
+Tue, 05 Mar 2024 11:54:59 GMT | INFO | backend.log | %s App is running at http://localhost:3001/  | 
+Tue, 05 Mar 2024 11:54:59 GMT | INFO | backend.log | Press CTRL-C to exit | 
+Tue, 05 Mar 2024 11:59:41 GMT | INFO | backend.log | myNotifications has called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 11:59:41 GMT | INFO | backend.log | userNotifications has called | data:{"userId":"5a98fb9536ab4f444b427176"} | 
+Tue, 05 Mar 2024 11:59:41 GMT | INFO | backend.log | myNotifications has called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 11:59:41 GMT | INFO | backend.log | userNotifications has called | data:{"userId":"5a98fb9536ab4f444b427176"} | 
+Tue, 05 Mar 2024 11:59:47 GMT | INFO | backend.log | repotinglocation/read API Start! | data:{"name":"System Administrator_Netroc","staffId":"admin001"} | 
+Tue, 05 Mar 2024 11:59:47 GMT | INFO | backend.log | businessunit/read/new API Start! | data:{"name":"System Administrator_Netroc","staffId":"admin001"} | 
+Tue, 05 Mar 2024 11:59:48 GMT | INFO | backend.log | repotinglocation/read API ends here! | data:{"name":"System Administrator_Netroc","staffId":"admin001"} | 
+Tue, 05 Mar 2024 11:59:48 GMT | INFO | backend.log | skillset/read API Start! | data:{"name":"System Administrator_Netroc","staffId":"admin001"} | 
+Tue, 05 Mar 2024 11:59:48 GMT | INFO | backend.log | businessunit/read/new API ends here! | data:{"name":"System Administrator_Netroc","staffId":"admin001"} | 
+Tue, 05 Mar 2024 11:59:48 GMT | INFO | backend.log | skillset/read API ends here! | data:{"name":"System Administrator_Netroc","staffId":"admin001"} | 
+Tue, 05 Mar 2024 11:59:57 GMT | INFO | backend.log | myNotifications has called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 11:59:57 GMT | INFO | backend.log | userNotifications has called | data:{"userId":"5a98fb9536ab4f444b427176"} | 
+Tue, 05 Mar 2024 11:59:57 GMT | INFO | backend.log | myNotifications has called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 11:59:57 GMT | INFO | backend.log | userNotifications has called | data:{"userId":"5a98fb9536ab4f444b427176"} | 
+Tue, 05 Mar 2024 12:00:25 GMT | INFO | backend.log | myNotifications has called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:25 GMT | INFO | backend.log | userNotifications has called | data:{"userId":"5a98fb9536ab4f444b427176"} | 
+Tue, 05 Mar 2024 12:00:25 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:26 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:29 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:29 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:29 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:30 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:30 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:30 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:30 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:30 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:33 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:38 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:46 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:50 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:00:51 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:18 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:19 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:19 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:19 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:19 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:19 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:20 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:20 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:20 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:01:20 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:30 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:30 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:31 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:31 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:31 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:31 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:31 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:32 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:32 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:35 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:42 GMT | INFO | backend.log | readWithPnV2 has been called | data:"5a98fb9536ab4f444b427176" | 
+Tue, 05 Mar 2024 12:02:42 GMT | INFO | backend.log | read notification called | 
+Tue, 05 Mar 2024 12:02:42 GMT | INFO | backend.log | read notification called | data:{"businessUnitId":"6073dd34945d3e046fbfd180"} | 
+Tue, 05 Mar 2024 12:02:42 GMT | INFO | backend.log | read getNotificationDetails called | data:{"businessUnitId":"6073dd34945d3e046fbfd180"} | 
